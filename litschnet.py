@@ -13,9 +13,11 @@ class LitSchNet(pl.LightningModule):
         
         assert task in ['rmsd', 'tfd']
         self.task = task
+        
+        #self.automatic_optimization=False
 
     def forward(self, batch):
-        pred = self.schnet(batch.z.long(), batch.pos, batch.batch) # we assume the atomic number is the first atom feature
+        pred = self.schnet(batch.z.long(), batch.pos, batch.batch)
         if self.task == 'rmsd' :
             pred = self.leaky_relu(pred)
         elif self.task == 'tfd' :

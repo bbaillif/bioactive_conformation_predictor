@@ -109,7 +109,7 @@ class MoleculeFeaturizer() :
             mol_bond_features.append(bond_features)
         return mol_bond_features, row, col
     
-    def conf_to_data(self, rdkit_mol, conf_id, x, edge_index, edge_attr) :
+    def conf_to_data(self, rdkit_mol, conf_id, x, edge_index, edge_attr, save_mol=False) :
         conf = rdkit_mol.GetConformer(conf_id)
         pos = torch.tensor(conf.GetPositions(), dtype=torch.float32)
         
@@ -118,21 +118,20 @@ class MoleculeFeaturizer() :
         dummy_mol.RemoveAllConformers()
         dummy_mol.AddConformer(conf)
         
+        if save_mol :
+            data_id = dummy_mol
+        else :
+            data_id = Chem.MolToSmiles(dummy_mol)
+            
         if self.encode_graph :
-            data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr, pos=pos, mol=dummy_mol)
+            data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr, pos=pos, data_id=data_id)
         else :
             z = x[:, 0]
-            data = Data(z=z, edge_index=edge_index, pos=pos, mol=dummy_mol)
+            data = Data(z=z, edge_index=edge_index, pos=pos, data_id=data_id)
             
         return data
     
-    def get_bioactive_rmsds(self, data_list, rmsd_func='ccdc') :
-        
-        mols = [data.mol for data in data_list]
-        # join all conformers in one mol
-        rdkit_mol = mols[0]
-        for mol in mols[1:] :
-            rdkit_mol.AddConformer(mol.GetConformer(), assignId=True)
+    def get_bioactive_rmsds(self, rdkit_mol, rmsd_func='ccdc') :
         
         bioactive_conf_ids = [conf.GetId() for conf in rdkit_mol.GetConformers() if not conf.HasProp('Generator')]
         generated_conf_ids = [conf.GetId() for conf in rdkit_mol.GetConformers() if conf.HasProp('Generator')]
