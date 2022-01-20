@@ -3,8 +3,7 @@ import copy
 
 from typing import List, Union
 from rdkit import Chem
-from rdkit.Chem.rdchem import Mol, Conformer
-from rdkit.Chem.rdmolfiles import CanonicalRankAtoms
+from rdkit.Chem.rdchem import Mol
 from rdkit.Chem.rdDistGeom import EmbedMolecule, EmbedMultipleConfs
 from numpy.testing import assert_array_equal
 from tqdm import tqdm
@@ -215,6 +214,7 @@ class ConfEnsembleLibrary(object) :
     
     def __init__(self, mol_list: List[Mol]) :
         self.library = {}
+        print('Generating library')
         for mol in tqdm(mol_list) :
             smiles = Chem.MolToSmiles(mol)
             if smiles in self.library :

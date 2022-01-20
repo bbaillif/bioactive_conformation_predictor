@@ -10,6 +10,7 @@ from rdkit.Chem.rdchem import (
     Mol)
 from rdkit.Chem.rdDistGeom import EmbedMultipleConfs
 from rdkit.Chem.rdMolAlign import GetBestRMS
+from rdkit.Chem.rdForceFieldHelpers import MMFFGetMoleculeProperties, MMFFGetMoleculeForceField
 from ccdc_rdkit_connector import CcdcRdkitConnector
 from molecule_encoders import MoleculeEncoders
 from conf_ensemble import ConfEnsembleLibrary
@@ -110,6 +111,12 @@ class MoleculeFeaturizer() :
         return mol_bond_features, row, col
     
     def conf_to_data(self, rdkit_mol, conf_id, x, edge_index, edge_attr, save_mol=False) :
+        
+        mol_properties = MMFFGetMoleculeProperties(rdkit_mol)
+        mmff = MMFFGetMoleculeForceField(rdkit_mol, mol_properties, confId=conf_id)
+        mmff_energy = mmff.CalcEnergy()
+        y = torch.tensor(mmff_energies, requires_grad=False)
+        
         conf = rdkit_mol.GetConformer(conf_id)
         pos = torch.tensor(conf.GetPositions(), dtype=torch.float32)
         
@@ -124,10 +131,10 @@ class MoleculeFeaturizer() :
             data_id = Chem.MolToSmiles(dummy_mol)
             
         if self.encode_graph :
-            data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr, pos=pos, data_id=data_id)
+            data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr, pos=pos, data_id=data_id, mmff_energy=mmff_energy)
         else :
             z = x[:, 0]
-            data = Data(z=z, edge_index=edge_index, pos=pos, data_id=data_id)
+            data = Data(z=z, edge_index=edge_index, pos=pos, data_id=data_id, mmff_energy=mmff_energy)
             
         return data
     
