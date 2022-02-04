@@ -40,3 +40,28 @@ class CcdcRdkitConnector() :
             generated_conf_ids.append(conf_id)
 
         return generated_conf_ids
+    
+    def ccdc_mol_to_rdkit_mol(self, ccdc_mol) :
+        mol2block = ccdc_mol.to_string()
+        return Chem.MolFromMol2Block(mol2block)
+    
+    def ccdc_mols_to_rdkit_mol_conformers(self, ccdc_mols, rdkit_mol) :
+        """Add conformers to the rdkit_mol in place
+        Args:
+            ccdc_mols : List[Molecule]
+            rdkit_mol
+        Returns:
+            generated_conf_ids : Id of the added conformations in the rdkit molecule
+        """
+        
+        generated_conf_ids = []
+
+        for ccdc_mol in ccdc_mols :
+            new_rdkit_conf = copy.deepcopy(rdkit_mol).GetConformer()
+            for i in range(new_rdkit_conf.GetNumAtoms()) :
+                atom = ccdc_mol.atoms[i]
+                point3d = Point3D(*atom.coordinates)
+                new_rdkit_conf.SetAtomPosition(i, point3d)
+            new_rdkit_conf.SetProp('Generator', 'CCDC')
+            conf_id = rdkit_mol.AddConformer(new_rdkit_conf, assignId=True)
+            generated_conf_ids.append(conf_id)

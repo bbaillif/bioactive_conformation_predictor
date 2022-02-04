@@ -10,7 +10,8 @@ from rdkit.Chem.rdchem import (
     Mol)
 from rdkit.Chem.rdDistGeom import EmbedMultipleConfs
 from rdkit.Chem.rdMolAlign import GetBestRMS
-from rdkit.Chem.rdForceFieldHelpers import MMFFGetMoleculeProperties, MMFFGetMoleculeForceField
+from rdkit.Chem import AllChem #needed for rdForceFieldHelpers
+from rdkit.Chem.rdForceFieldHelpers import MMFFGetMoleculeProperties, MMFFGetMoleculeForceField, MMFFSanitizeMolecule
 from ccdc_rdkit_connector import CcdcRdkitConnector
 from molecule_encoders import MoleculeEncoders
 from conf_ensemble import ConfEnsembleLibrary
@@ -49,7 +50,7 @@ class MoleculeFeaturizer() :
         
         # Make one data per conformer, because it has different positions
         for conf_id, conf in enumerate(rdkit_mol.GetConformers()) :
-            data = self.conf_to_data(rdkit_mol, conf_id, x, edge_index, edge_attr)
+            data = self.conf_to_data(rdkit_mol=rdkit_mol, conf_id=conf_id, edge_index=edge_index, x=x, edge_attr=edge_attr)
             data_list.append(data)
             
         return data_list
@@ -110,12 +111,7 @@ class MoleculeFeaturizer() :
             mol_bond_features.append(bond_features)
         return mol_bond_features, row, col
     
-    def conf_to_data(self, rdkit_mol, conf_id, x, edge_index, edge_attr, save_mol=False) :
-        
-        mol_properties = MMFFGetMoleculeProperties(rdkit_mol)
-        mmff = MMFFGetMoleculeForceField(rdkit_mol, mol_properties, confId=conf_id)
-        mmff_energy = mmff.CalcEnergy()
-        y = torch.tensor(mmff_energies, requires_grad=False)
+    def conf_to_data(self, rdkit_mol, conf_id, edge_index, z=None, x=None, edge_attr=None, save_mol=False) :
         
         conf = rdkit_mol.GetConformer(conf_id)
         pos = torch.tensor(conf.GetPositions(), dtype=torch.float32)
@@ -125,16 +121,35 @@ class MoleculeFeaturizer() :
         dummy_mol.RemoveAllConformers()
         dummy_mol.AddConformer(conf)
         
+        # compute energy
+        dummy_mol = Chem.AddHs(dummy_mol, addCoords=True)
+        
+        MMFFSanitizeMolecule(dummy_mol)
+        mol_properties = MMFFGetMoleculeProperties(dummy_mol)
+        mmff = MMFFGetMoleculeForceField(dummy_mol, mol_properties)
+        mmff_energy = mmff.CalcEnergy()
+
+        uff = AllChem.UFFGetMoleculeForceField(dummy_mol)
+        energy = uff.CalcEnergy()
+
+        y = torch.tensor(energy, requires_grad=False)
+        dummy_mol = Chem.RemoveHs(dummy_mol)
+        
         if save_mol :
             data_id = dummy_mol
         else :
             data_id = Chem.MolToSmiles(dummy_mol)
             
         if self.encode_graph :
-            data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr, pos=pos, data_id=data_id, mmff_energy=mmff_energy)
+            assert edge_attr is not None
+            assert x is not None
+            data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr, pos=pos, data_id=data_id, energy=energy)
         else :
-            z = x[:, 0]
-            data = Data(z=z, edge_index=edge_index, pos=pos, data_id=data_id, mmff_energy=mmff_energy)
+            if x is not None :
+                z = x[:, 0]
+            else :
+                assert z is not None
+            data = Data(z=z, edge_index=edge_index, pos=pos, data_id=data_id, energy=energy)
             
         return data
     

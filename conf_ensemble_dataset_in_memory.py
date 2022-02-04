@@ -23,12 +23,17 @@ class ConfEnsembleDataset(InMemoryDataset) :
                  loaded_chunk: int=0,
                  smiles_list: List=[],
                  chunk_size: int=4000,
-                 verbose: int=0):
+                 verbose: int=0,
+                 filter_out_bioactive: bool=False):
         
         self.root = root
         self.dataset = dataset
+        self.loaded_chunk = loaded_chunk
+        self.smiles_list = smiles_list
         self.chunk_size = chunk_size
         self.verbose = verbose
+        self.filter_out_bioactive = filter_out_bioactive
+        
         self.smiles_df = pd.read_csv(os.path.join(self.root, 'smiles_df.csv'))
         self.conf_df = pd.read_csv(os.path.join(self.root, 'conf_df.csv'))
         is_platinum = self.smiles_df['platinum']
@@ -70,7 +75,11 @@ class ConfEnsembleDataset(InMemoryDataset) :
             for data in self :
                 data_smiles = data.data_id
                 if data_smiles in smiles_list :
-                    all_data_list.append(data)
+                    if self.filter_out_bioactive :
+                        if data.rmsd != 0 :
+                            all_data_list.append(data)
+                    else :
+                        all_data_list.append(data)
             self.data, self.slices = self.collate(all_data_list)
             
     
@@ -92,37 +101,27 @@ class ConfEnsembleDataset(InMemoryDataset) :
         
         # Generate data
         all_data_list = []
+        chunk_number = 0
         for idx, smiles in enumerate(tqdm(self.included_smiles)) :
             conf_idxs = self.conf_df[self.conf_df['smiles'] == smiles].index
             
             conf_ensemble = conf_ensemble_library.get_conf_ensemble(smiles)
             mol = conf_ensemble.mol
-            data_list = self.molecule_featurizer.featurize_mol(mol)
-            rmsds = self.molecule_featurizer.get_bioactive_rmsds(mol)
-            for i, data in enumerate(data_list) :
-                data.rmsd = rmsds[i]
-                all_data_list.append(data)
-            
-            
-#             try :
-#                 conf_ensemble = conf_ensemble_library.get_conf_ensemble(smiles)
-#                 mol = conf_ensemble.mol
-#                 data_list = self.molecule_featurizer.featurize_mol(mol)
-#                 rmsds = self.molecule_featurizer.get_bioactive_rmsds(data_list)
-#                 for i, data in enumerate(data_list) :
-#                     data.rmsd = rmsds[i]
-#                     all_data_list.append(data)
-#             except Exception as e : 
-#                 print('Error for the smiles : ' + smiles)
-#                 print(type(e))
+            try :
+                data_list = self.molecule_featurizer.featurize_mol(mol)
+                rmsds = self.molecule_featurizer.get_bioactive_rmsds(mol)
+                for i, data in enumerate(data_list) :
+                    data.rmsd = rmsds[i]
+                    all_data_list.append(data)
 
-            if (idx + 1) % self.chunk_size == 0 :
-                chunk_number = int(((idx + 1) / self.chunk_size) - 1)
-                torch.save(self.collate(all_data_list), self.processed_paths[chunk_number])
-                if self.verbose :
-                    print(f'Chunk num {chunk_number} saved')
-                all_data_list = []
-        chunk_number = chunk_number + 1
+                if (idx + 1) % self.chunk_size == 0 :
+                    torch.save(self.collate(all_data_list), self.processed_paths[chunk_number])
+                    if self.verbose :
+                        print(f'Chunk num {chunk_number} saved')
+                    all_data_list = []
+                    chunk_number = chunk_number + 1
+            except :
+                print(f'Error with smiles {smiles}')
         torch.save(self.collate(all_data_list), self.processed_paths[chunk_number])
         if self.verbose :
             print(f'Chunk num {chunk_number} saved')
