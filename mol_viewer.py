@@ -63,6 +63,7 @@ class MolViewer():
     
 class MolViewerTest(unittest.TestCase):
     
+    # only works in Jupyter
     def test_view(self):
         mol = Chem.MolFromSmiles('c1ccccc1')
         EmbedMultipleConfs(mol)
