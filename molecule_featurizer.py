@@ -20,13 +20,19 @@ from ccdc.descriptors import MolecularDescriptors
     
 class MoleculeFeaturizer() :
     
-    def __init__(self, encoders, encode_graph=False) :
-        self.molecule_encoders = encoders
-        self.encoded_atom_function_names = encoders.encoded_atom_function_names
-        self.encoded_bond_function_names = encoders.encoded_bond_function_names
-        self.encoded_ring_function_names = encoders.encoded_ring_function_names
-        self.ccdc_rdkit_connector = CcdcRdkitConnector()
+    def __init__(self, 
+                 encode_graph=False, 
+                 molecule_encoders=None) :
         self.encode_graph = encode_graph
+        self.molecule_encoders = molecule_encoders
+        if self.encode_graph :
+            assert self.molecule_encoders is not None, \
+                'Encoders must be defined if encode_graph is True'
+            self.molecule_encoders = molecule_encoders
+            self.encoded_atom_function_names = molecule_encoders.encoded_atom_function_names
+            self.encoded_bond_function_names = molecule_encoders.encoded_bond_function_names
+            self.encoded_ring_function_names = molecule_encoders.encoded_ring_function_names
+        self.ccdc_rdkit_connector = CcdcRdkitConnector()
         
     def featurize_mol(self, rdkit_mol, conf_generator='ccdc', rmsd_func='ccdc', interpolate=False, exclude_hydrogens=True) :
         
@@ -64,23 +70,25 @@ class MoleculeFeaturizer() :
 
             atom_features.append(atom.GetAtomicNum()) # Atomic number is both encoded as one hot and integer
             
-            # Add one hot encoding of atomic features
-            for function_name in self.encoded_atom_function_names :
-                function = eval(function_name)
-                one_hot_encoder = self.molecule_encoders[function_name]
-                value = function(atom)
-                atom_features.extend(one_hot_encoder.transform([[value]])[0])
+            if self.molecule_encoders :
+                # Add one hot encoding of atomic features
+                for function_name in self.encoded_atom_function_names :
+                    function = eval(function_name)
+                    one_hot_encoder = self.molecule_encoders[function_name]
+                    value = function(atom)
+                    atom_features.extend(one_hot_encoder.transform([[value]])[0])
             
             atom_features.append(1 if atom.GetIsAromatic() else 0)
 
             atom_features.extend([atom.IsInRingSize(size) for size in range(3, 9)])
 
-            # Add one hot encoding of ring features in atomic features
-            for function_name in self.encoded_ring_function_names :
-                function = eval(function_name)
-                one_hot_encoder = self.molecule_encoders[function_name]
-                value = function(ring, atom_idx)
-                atom_features.extend(one_hot_encoder.transform([[value]])[0])
+            if self.molecule_encoders :
+                # Add one hot encoding of ring features in atomic features
+                for function_name in self.encoded_ring_function_names :
+                    function = eval(function_name)
+                    one_hot_encoder = self.molecule_encoders[function_name]
+                    value = function(ring, atom_idx)
+                    atom_features.extend(one_hot_encoder.transform([[value]])[0])
 
             mol_atom_features.append(atom_features)
 
@@ -97,12 +105,13 @@ class MoleculeFeaturizer() :
             row.append(start)
             col.append(end)
 
-            # Add one hot encoding of bond features
-            for function_name in self.encoded_bond_function_names :
-                function = eval(function_name)
-                one_hot_encoder = self.molecule_encoders[function_name]
-                value = function(bond)
-                bond_features.extend(one_hot_encoder.transform([[value]])[0])
+            if self.molecule_encoders :
+                # Add one hot encoding of bond features
+                for function_name in self.encoded_bond_function_names :
+                    function = eval(function_name)
+                    one_hot_encoder = self.molecule_encoders[function_name]
+                    value = function(bond)
+                    bond_features.extend(one_hot_encoder.transform([[value]])[0])
 
             bond_features.append(int(bond.IsInRing()))
             bond_features.append(int(bond.GetIsConjugated()))

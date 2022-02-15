@@ -1,0 +1,141 @@
+import os
+import seaborn as sns
+import time
+
+
+from rdkit import Chem
+from ccdc.docking import Docker
+from ccdc.io import MoleculeReader
+from ccdc_rdkit_connector import CcdcRdkitConnector
+from ccdc.io import Entry, Molecule
+from multiprocessing import Pool
+from abc import abstractmethod
+
+import ccdc
+
+class FailedGOLDDockingException(Exception) :
+    """Raised if GOLD does not return 0
+    
+    """
+    def __init__(self):
+        message = 'GOLD did not returns 0, docking failed'
+        super().__init__(message)
+
+class GOLDDocker() :
+    """Initialize a GOLD Docker with a protein, the native ligand and 
+    default settings
+        
+    :param protein_path: Path to the protein pdb file
+    :type protein_path: str
+    :param native_ligand_path: Path to the ligand mol2 file
+    :type native_ligand_path: str
+    :param output_dir: Path where to store params and results
+    :type output_dir: str
+    """
+    
+    def __init__(self,
+                 protein_path: str,
+                 native_ligand_path: str,
+                 experiment_id: str,
+                 output_dir: str='gold_docking_dude',
+                 ):
+        
+        self.output_dir = os.path.abspath(output_dir)
+        self.protein_path = protein_path
+        self.native_ligand_path = native_ligand_path
+        self.experiment_id = experiment_id
+        
+        if not os.path.exists(self.output_dir) :
+            os.mkdir(self.output_dir)
+        
+        self.docker = Docker()
+        
+        # Setup some default settings for our experiments
+        self.settings = self.docker.settings
+        self.settings.fitness_function = 'plp'
+        self.settings.autoscale = 10.
+        self.settings.early_termination = False
+        self.settings.diverse_solutions = True
+
+        self.ligand_preparation = Docker.LigandPreparation()
+        
+        self.ccdc_rdkit_connector = CcdcRdkitConnector()
+        
+        self.settings.add_protein_file(protein_path)
+        self.settings.reference_ligand_file = native_ligand_path
+        
+        docker_output_dir = os.path.join(self.output_dir, 
+                                         self.experiment_id)
+        if not os.path.exists(docker_output_dir) :
+            os.mkdir(docker_output_dir)
+        self.settings.output_directory = docker_output_dir
+
+        # Define binding site
+        self.protein = self.settings.proteins[0]
+        self.native_ligand = MoleculeReader(self.native_ligand_path)[0]
+        bs = self.settings.BindingSiteFromLigand(protein=self.protein, 
+                                                 ligand=self.native_ligand)
+        self.settings.binding_site = bs
+            
+
+    def dock_molecule(self, 
+                      ccdc_mol: Molecule,
+                      mol_id: str,
+                      n_poses: int=100,
+                      return_runtime: bool=False,
+                      ):
+        """Dock a single molecule using GOLD 
+        
+        :param ccdc_mol: Molecule to dock
+        :type ccdc_mol: ccdc.io.Molecule
+        :param mol_id: identifier to give to the molecule (for results 
+            directory)
+        :type mol_id: str
+        :param n_poses: Number of output poses of docking
+        :type n_poses: int
+        :param return_runtime: Whether or not to return docking runtime
+        :type return_runtime: bool
+        :return: docking results and runtime if asked
+        :rtype: DockingResults (and float if return_runtime)
+        """
+        
+        mol_output_dir = os.path.join(self.output_dir,
+                                      self.experiment_id,
+                                      mol_id)
+        if not os.path.exists(mol_output_dir) :
+            os.mkdir(mol_output_dir)
+        self.settings.output_directory = mol_output_dir
+        
+        poses_output_file = os.path.join(mol_output_dir, 
+                                         f'docked_ligands.mol2')
+        self.settings.output_file = poses_output_file
+
+        original_ligand_file = os.path.join(mol_output_dir, 
+                                            f'original_ligand.mol2')
+        self.prepare_ligand(ccdc_mol=ccdc_mol,
+                            ligand_file=original_ligand_file,
+                            n_poses=n_poses)
+        
+        start_time = time.time()
+        conf_file_name = os.path.join(mol_output_dir, f'api_gold.conf')
+        results = self.docker.dock(file_name=conf_file_name)
+        if results.return_code :
+            raise FailedGOLDDockingException()
+        runtime = time.time() - start_time
+        
+        if return_runtime :
+            return results, runtime
+        else :
+            return results
+
+    def prepare_ligand(self,
+                       ccdc_mol: Molecule,
+                       ligand_file: str,
+                       n_poses: int,
+                       ):
+        
+        ligand = self.ligand_preparation.prepare(Entry.from_molecule(ccdc_mol))
+        mol2_string = ligand.to_string(format='mol2')
+        with open(ligand_file, 'w') as writer :
+            writer.write(mol2_string)
+        self.settings.add_ligand_file(ligand_file, n_poses)

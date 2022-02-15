@@ -17,29 +17,36 @@ from tqdm import tqdm
 class MoleculeEncoders(object) :
     
     """
-    Build one hot encoders for molecule feature extraction functions, based on available values in a 
-    conformation ensemble library. A dict is used to store OneHotEncoder objects using the function name
-    (because RDKit functions are from Boost, and therefore not picklable)
+    Build one hot encoders for molecule feature extraction functions, based on 
+    available values in a conformation ensemble library. A dict is used to 
+    store OneHotEncoder objects using the function name (because RDKit functions
+    are from Boost, and therefore not picklable)
     """
     
     def __init__(self) :
         self.encoders = {}
-        self.encoded_atom_function_names = [f'{function.__module__}.{function.__name__}' for function in [Atom.GetAtomicNum, 
-                                                                                                          Atom.GetDegree, 
-                                                                                                          Atom.GetHybridization, 
-                                                                                                          Atom.GetChiralTag, 
-                                                                                                          Atom.GetImplicitValence, 
-                                                                                                          Atom.GetFormalCharge]]
-        self.encoded_bond_function_names = [f'{function.__module__}.{function.__name__}' for function in [Bond.GetBondType]]
-        self.encoded_ring_function_names = [f'{function.__module__}.{function.__name__}' for function in [RingInfo.NumAtomRings]]
+        self.encoded_atom_function_names = [f'{function.__module__}.{function.__name__}' 
+                                            for function in [Atom.GetAtomicNum, 
+                                                            Atom.GetDegree, 
+                                                            Atom.GetHybridization, 
+                                                            Atom.GetChiralTag, 
+                                                            Atom.GetImplicitValence, 
+                                                            Atom.GetFormalCharge]]
+        self.encoded_bond_function_names = [f'{function.__module__}.{function.__name__}' 
+                                            for function in [Bond.GetBondType]]
+        self.encoded_ring_function_names = [f'{function.__module__}.{function.__name__}' 
+                                            for function in [RingInfo.NumAtomRings]]
     
-    def create_encoders(self, conf_ensemble_library: ConfEnsembleLibrary) :
+    def create_encoders(self, 
+                        conf_ensemble_library: ConfEnsembleLibrary) :
         all_function_names = self.encoded_atom_function_names + self.encoded_bond_function_names + self.encoded_ring_function_names
         for function_name in tqdm(all_function_names) :
             self.create_one_hot_encoder(function_name=function_name, 
                                         conf_ensemble_library=conf_ensemble_library)
     
-    def create_one_hot_encoder(self, function_name: str, conf_ensemble_library: ConfEnsembleLibrary) :
+    def create_one_hot_encoder(self, 
+                               function_name: str, 
+                               conf_ensemble_library: ConfEnsembleLibrary) :
         function = eval(function_name)
         values = self.get_all_function_values_in_library(function_name=function_name,
                                                                 conf_ensemble_library=conf_ensemble_library)
