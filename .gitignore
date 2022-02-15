@@ -143,3 +143,6 @@ threeDTransformer/
 confs_for_gold/
 atomic_contributions/
 ipynb_checkpoints/
+gold_docking_dude/
+gold_docking*
+old*
