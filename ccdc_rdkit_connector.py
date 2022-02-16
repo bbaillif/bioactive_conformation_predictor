@@ -4,6 +4,9 @@ from rdkit import Chem
 from rdkit.Geometry.rdGeometry import Point3D
 from ccdc.molecule import Molecule
 
+class ConversionError(Exception) :
+    pass
+
 class CcdcRdkitConnector() :
     
     def rdkit_conf_to_ccdc_mol(self, rdkit_mol, conf_id=0) :
@@ -33,11 +36,18 @@ class CcdcRdkitConnector() :
         :rtype: rdkit.Chem.rdchem.Mol, List[int]
         """
         
-        generated_conf_ids = []
+        new_conf_ids = []
 
         if rdkit_mol is None :
             rdkit_mol = self.ccdc_mol_to_rdkit_mol(ccdc_ensemble[0].molecule)
-            ccdc_ensemble = ccdc_ensemble[1:] # because first mol is template
+            ccdc_ensemble = [entry 
+                             for i, entry in enumerate(ccdc_ensemble) 
+                             if i in range(1, len(ccdc_ensemble))]
+            # because first mol is template
+            # and for some reason docking results.ligands are not sliceable
+
+            if rdkit_mol is None :
+                raise ConversionError()
 
         for entry in ccdc_ensemble :
             new_rdkit_conf = copy.deepcopy(rdkit_mol).GetConformer()
@@ -47,11 +57,14 @@ class CcdcRdkitConnector() :
                 new_rdkit_conf.SetAtomPosition(i, point3d)
             new_rdkit_conf.SetProp('Generator', 'CCDC')
             conf_id = rdkit_mol.AddConformer(new_rdkit_conf, assignId=True)
-            generated_conf_ids.append(conf_id)
-
-        return rdkit_mol, generated_conf_ids
+            new_conf_ids.append(conf_id)
+        
+        return rdkit_mol, new_conf_ids
     
     def ccdc_mol_to_rdkit_mol(self, ccdc_mol) :
+        ccdc_mol.remove_atoms([atom 
+                               for atom in ccdc_mol.atoms 
+                               if atom.atomic_number < 1])
         mol2block = ccdc_mol.to_string()
         return Chem.MolFromMol2Block(mol2block)
     
