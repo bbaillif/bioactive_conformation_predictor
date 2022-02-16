@@ -1,7 +1,5 @@
 import os
-import seaborn as sns
 import time
-
 
 from rdkit import Chem
 from ccdc.docking import Docker
@@ -11,14 +9,12 @@ from ccdc.io import Entry, Molecule
 from multiprocessing import Pool
 from abc import abstractmethod
 
-import ccdc
-
 class FailedGOLDDockingException(Exception) :
     """Raised if GOLD does not return 0
     
     """
     def __init__(self):
-        message = 'GOLD did not returns 0, docking failed'
+        message = 'GOLD did not return 0, docking failed'
         super().__init__(message)
 
 class GOLDDocker() :
@@ -81,7 +77,7 @@ class GOLDDocker() :
     def dock_molecule(self, 
                       ccdc_mol: Molecule,
                       mol_id: str,
-                      n_poses: int=100,
+                      n_poses: int=20,
                       return_runtime: bool=False,
                       ):
         """Dock a single molecule using GOLD 
@@ -138,4 +134,5 @@ class GOLDDocker() :
         mol2_string = ligand.to_string(format='mol2')
         with open(ligand_file, 'w') as writer :
             writer.write(mol2_string)
+        self.settings.clear_ligand_files()
         self.settings.add_ligand_file(ligand_file, n_poses)

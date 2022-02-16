@@ -1,9 +1,10 @@
+from xdrlib import ConversionError
 import numpy as np
 import torch
 
 from abc import abstractmethod
 from torch_geometric.data import Batch
-from ccdc_rdkit_connector import CcdcRdkitConnector
+from ccdc_rdkit_connector import CcdcRdkitConnector, ConversionError
 
 class PoseSelector():
 
@@ -57,7 +58,7 @@ class RandomPoseSelector(PoseSelector) :
     def select_poses(self,
                      poses):
         n_poses = len(poses)
-        random_values = np.random((n_poses))
+        random_values = np.random.randn((n_poses))
         poses_subset = self.filter_subset(poses, values=random_values)
             
         return poses_subset
@@ -72,7 +73,7 @@ class ScorePoseSelector(PoseSelector):
     
     def select_poses(self,
                      poses,):
-        scores = [pose.fitness for pose in poses]
+        scores = [pose.fitness() for pose in poses]
         poses_subset = self.filter_subset(poses, 
                                           values=scores, 
                                           ascending=False)
@@ -93,13 +94,18 @@ class EnergyPoseSelector(PoseSelector):
     
     def select_poses(self,
                      poses,):
-        rdkit_mol = self.ccdc_rdkit_connector.ccdc_ensemble_to_rdkit_mol(
-            ccdc_ensemble=poses
-            )
-
-        data_list = self.mol_featurizer.featurize_mol(rdkit_mol)
-        energies = [data.energy for data in data_list]
-        poses_subset = self.filter_subset(poses, values=energies)
+        try :
+            rdkit_mol, new_conf_ids = self.ccdc_rdkit_connector.ccdc_ensemble_to_rdkit_mol(
+                ccdc_ensemble=poses
+                )
+            try :
+                data_list = self.mol_featurizer.featurize_mol(rdkit_mol)
+                energies = [data.energy for data in data_list]
+                poses_subset = self.filter_subset(poses, values=energies)
+            except AttributeError :
+                poses_subset = None
+        except ConversionError :
+            poses_subset = None
             
         return poses_subset
         
@@ -119,18 +125,24 @@ class ModelPoseSelector(PoseSelector):
     
     def select_poses(self,
                      poses,):
-        rdkit_mol = self.ccdc_rdkit_connector.ccdc_ensemble_to_rdkit_mol(
-            ccdc_ensemble=poses
-            )
+        try :
+            rdkit_mol, new_conf_ids = self.ccdc_rdkit_connector.ccdc_ensemble_to_rdkit_mol(
+                ccdc_ensemble=poses
+                )
+            try :
+                data_list = self.mol_featurizer.featurize_mol(rdkit_mol)
+                batch = Batch.from_data_list(data_list)
 
-        data_list = self.mol_featurizer.featurize_mol(rdkit_mol)
-        batch = Batch.from_data_list(data_list)
-
-        with torch.no_grad() :
-            preds = self.model(batch).cpu().numpy()
-            preds = preds.reshape(-1)
-        
-        top20_preds = preds.argsort()[:20]
-        poses_subset = [pose for i, pose in enumerate(poses) if i in top20_preds]
+                with torch.no_grad() :
+                    preds = self.model(batch).cpu().numpy()
+                    preds = preds.reshape(-1)
+                
+                top20_preds = preds.argsort()[:20]
+                poses_subset = [pose for i, pose in enumerate(poses) if i in top20_preds]
+                
+            except AttributeError :
+                poses_subset = None
+        except ConversionError :
+            poses_subset = None
             
         return poses_subset

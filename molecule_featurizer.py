@@ -134,14 +134,14 @@ class MoleculeFeaturizer() :
         dummy_mol = Chem.AddHs(dummy_mol, addCoords=True)
         
         MMFFSanitizeMolecule(dummy_mol)
-        mol_properties = MMFFGetMoleculeProperties(dummy_mol)
-        mmff = MMFFGetMoleculeForceField(dummy_mol, mol_properties)
-        mmff_energy = mmff.CalcEnergy()
+        # mol_properties = MMFFGetMoleculeProperties(dummy_mol)
+        # mmff = MMFFGetMoleculeForceField(dummy_mol, mol_properties)
+        # mmff_energy = mmff.CalcEnergy()
 
         uff = AllChem.UFFGetMoleculeForceField(dummy_mol)
         energy = uff.CalcEnergy()
 
-        y = torch.tensor(energy, requires_grad=False)
+        # y = torch.tensor(energy, requires_grad=False)
         dummy_mol = Chem.RemoveHs(dummy_mol)
         
         if save_mol :
