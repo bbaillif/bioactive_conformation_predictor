@@ -35,6 +35,7 @@ def gold_docking(ccdc_mols,
                  native_ligand,
                  protein_file: str,
                  ligand_file: str,
+                 docking_dir: str,
                  dock_id: str,
                  rigid: bool=True,
                  n_pose_per_conf: int=5,
@@ -57,7 +58,7 @@ def gold_docking(ccdc_mols,
         
     ligand_prep = Docker.LigandPreparation()
         
-    output_dir = os.path.abspath(os.path.join('gold_docking', f'{dock_id}'))
+    output_dir = os.path.abspath(os.path.join(docking_dir, f'{dock_id}'))
     if not os.path.exists(output_dir) :
         os.mkdir(output_dir)
         
@@ -126,22 +127,36 @@ def gold_docking(ccdc_mols,
 
 def dock_smiles(params) :
     dock_id, smiles, ce = params
+    n_filtered_poses = 5
+    docking_dir = f'gold_docking_rigid_{n_filtered_poses}'
+    if not os.path.exists(docking_dir) :
+        os.mkdir(docking_dir)
     connector = CcdcRdkitConnector()
     pdbbind_refined_dir = '/home/benoit/PDBBind/PDBbind_v2020_refined/refined-set/'
     pdbbind_general_dir = '/home/benoit/PDBBind/PDBbind_v2020_other_PL/v2020-other-PL/'
     #ce = cel.get_conf_ensemble(smiles)
     pdb_id = ce.mol.GetConformer(0).GetProp('PDB_ID')
-    generated_ids = [i for i, conf in enumerate(ce.mol.GetConformers()) if conf.HasProp('Generator')]
+    generated_ids = [i 
+                     for i, conf in enumerate(ce.mol.GetConformers()) 
+                     if conf.HasProp('Generator')]
     n_generated_confs = len(generated_ids)
     
     if n_generated_confs == 100 :
     
         if pdb_id in os.listdir(pdbbind_refined_dir) :
-            protein_file = os.path.join(pdbbind_refined_dir, pdb_id, f'{pdb_id}_protein.pdb')
-            ligand_file = os.path.join(pdbbind_refined_dir, pdb_id, f'{pdb_id}_ligand.mol2')
+            protein_file = os.path.join(pdbbind_refined_dir, 
+                                        pdb_id, 
+                                        f'{pdb_id}_protein.pdb')
+            ligand_file = os.path.join(pdbbind_refined_dir, 
+                                       pdb_id, 
+                                       f'{pdb_id}_ligand.mol2')
         else :
-            protein_file = os.path.join(pdbbind_general_dir, pdb_id, f'{pdb_id}_protein.pdb')
-            ligand_file = os.path.join(pdbbind_general_dir, pdb_id, f'{pdb_id}_ligand.mol2')
+            protein_file = os.path.join(pdbbind_general_dir, 
+                                        pdb_id, 
+                                        f'{pdb_id}_protein.pdb')
+            ligand_file = os.path.join(pdbbind_general_dir, 
+                                       pdb_id, 
+                                       f'{pdb_id}_ligand.mol2')
 
         native_ligand = connector.rdkit_conf_to_ccdc_mol(ce.mol, conf_id=0)
             
@@ -162,9 +177,9 @@ def dock_smiles(params) :
                                                      native_ligand=native_ligand,
                                                      protein_file=protein_file,
                                                      ligand_file=ligand_file,
+                                                     docking_dir=docking_dir,
                                                      dock_id=current_dock_id,
-                                                     rigid=False,
-                                                    n_pose_per_conf=20)
+                                                     rigid=False)
             
             # All rigid
             current_dock_id = f'{dock_id}_all'
@@ -172,14 +187,16 @@ def dock_smiles(params) :
                                                 native_ligand=native_ligand,
                                                 protein_file=protein_file,
                                                 ligand_file=ligand_file, 
+                                                docking_dir=docking_dir,
                                                 dock_id=current_dock_id)
             
             # CCDC top 20
             current_dock_id = f'{dock_id}_ccdc'
-            all_results_d['ccdc'] = gold_docking(ccdc_mols=ccdc_mols[:20],
+            all_results_d['ccdc'] = gold_docking(ccdc_mols=ccdc_mols[:n_filtered_poses],
                                                 native_ligand=native_ligand,
                                                 protein_file=protein_file,
                                                 ligand_file=ligand_file,
+                                                docking_dir=docking_dir,
                                                 dock_id=current_dock_id)
             
             # Model top 20
@@ -195,7 +212,7 @@ def dock_smiles(params) :
             with torch.no_grad() :
                 preds = litschnet(batch).cpu().numpy()
             preds = preds.reshape(-1)
-            top20_index = preds.argsort()[:20]
+            top20_index = preds.argsort()[:n_filtered_poses]
             sorted_ccdc_mols = [ccdc_mol for i, ccdc_mol in enumerate(ccdc_mols) if i in top20_index]
             
             current_dock_id = f'{dock_id}_model'
@@ -203,11 +220,12 @@ def dock_smiles(params) :
                                                     native_ligand=native_ligand,
                                                     protein_file=protein_file,
                                                     ligand_file=ligand_file,
+                                                    docking_dir=docking_dir,
                                                     dock_id=current_dock_id)
             
             # Energy top 20
             energies = np.array([data.energy for data in data_list])
-            top20_index = energies.argsort()[:20]
+            top20_index = energies.argsort()[:n_filtered_poses]
             sorted_ccdc_mols = [ccdc_mol for i, ccdc_mol in enumerate(ccdc_mols) if i in top20_index]
             
             current_dock_id = f'{dock_id}_energy'
@@ -215,18 +233,21 @@ def dock_smiles(params) :
                                                   native_ligand=native_ligand,
                                                   protein_file=protein_file,
                                                   ligand_file=ligand_file,
-                                                dock_id=current_dock_id)
+                                                  docking_dir=docking_dir,
+                                                  dock_id=current_dock_id)
 
             # Random top 20
             current_dock_id = f'{dock_id}_random'
             random.shuffle(ccdc_mols)
-            all_results_d['random'] = gold_docking(ccdc_mols=ccdc_mols[:20],
+            all_results_d['random'] = gold_docking(ccdc_mols=ccdc_mols[:n_filtered_poses],
                                                 native_ligand=native_ligand,
                                                 protein_file=protein_file,
                                                 ligand_file=ligand_file,
+                                                docking_dir=docking_dir,
                                                 dock_id=current_dock_id)
             
-            with open(os.path.join('gold_docking', f'{dock_id}_results.p'), 'wb') as f :
+            with open(os.path.join(docking_dir, 
+                                   f'{dock_id}_results.p'), 'wb') as f :
                 pickle.dump(all_results_d, f)
             
         except Exception as e :
@@ -247,11 +268,7 @@ if __name__ == '__main__':
 
     mol = cel.get_conf_ensemble('COc1ccc(-c2cn(C)c(=O)c3cc(C(=O)NC4CCS(=O)(=O)CC4)sc23)cc1OC').mol
 
-    encoder_path = os.path.join(data_dir, 'molecule_encoders.p')
-    if os.path.exists(encoder_path) : # Load existing encoder
-        with open(encoder_path, 'rb') as f:
-            mol_encoders = pickle.load(f)
-    mol_featurizer = MoleculeFeaturizer(mol_encoders)
+    mol_featurizer = MoleculeFeaturizer()
 
     experiment_name = f'scaffold_split_0_new'
     if experiment_name in os.listdir('lightning_logs') :

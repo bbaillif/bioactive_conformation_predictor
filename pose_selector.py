@@ -132,7 +132,9 @@ class ModelPoseSelector(PoseSelector):
             try :
                 data_list = self.mol_featurizer.featurize_mol(rdkit_mol)
                 batch = Batch.from_data_list(data_list)
-
+                if torch.cuda.is_available() :
+                    batch = batch.to('cuda')
+                    
                 with torch.no_grad() :
                     preds = self.model(batch).cpu().numpy()
                     preds = preds.reshape(-1)

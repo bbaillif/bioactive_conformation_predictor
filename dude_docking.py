@@ -1,6 +1,8 @@
 import os
 import sys
 import numpy as np
+import pickle
+import torch
 
 from tqdm import tqdm
 from rdkit import Chem
@@ -48,11 +50,14 @@ class DUDEDocking() :
         self.model = LitSchNet.load_from_checkpoint(self.model_checkpoint_path)
         self.model.eval()
         
+        if torch.cuda.is_available() :
+            self.model = self.model.to('cuda')
+        
         self.pose_selectors = {
-            #'random' : RandomPoseSelector(number=1),
-            #'score' : ScorePoseSelector(number=1),
-            #'energy' : EnergyPoseSelector(mol_featurizer=self.mol_featurizer,
-            #                              number=1),
+            'random' : RandomPoseSelector(number=1),
+            'score' : ScorePoseSelector(number=1),
+            'energy' : EnergyPoseSelector(mol_featurizer=self.mol_featurizer,
+                                         number=1),
             'model' : ModelPoseSelector(model=self.model,
                                         mol_featurizer=self.mol_featurizer,
                                         number=1)
@@ -83,27 +88,8 @@ class DUDEDocking() :
                 print(f'Docking failed for {mol_id}')
                 
     def ef_analysis(self) :
-        dude_docking_dir = os.path.join(self.gold_docker.output_dir,
-                                        self.gold_docker.experiment_id)
-        docked_dirs = os.listdir(dude_docking_dir)
-        active_dirs = [os.path.join(dude_docking_dir, d)
-                       for d in docked_dirs 
-                       if 'active' in d]
-        decoy_dirs = [os.path.join(dude_docking_dir, d) 
-                      for d in docked_dirs 
-                      if 'decoy' in d]
         
-        active_poses = []
-        for active_dir in tqdm(active_dirs) :
-            poses = self.get_poses(active_dir)
-            if poses :
-                active_poses.append(poses)
-                
-        decoy_poses = []
-        for decoy_dir in tqdm(decoy_dirs) :
-            poses = self.get_poses(decoy_dir)
-            if poses :
-                decoy_poses.append(poses)
+        active_poses, decoy_poses = self.load_poses()
                 
         for selector_name, pose_selector in self.pose_selectors.items() :
             active_selected_poses = []
@@ -142,17 +128,59 @@ class DUDEDocking() :
         
 
     def get_poses(self, directory) :
-        conf_file_path = os.path.join(directory, 'api_gold.conf')
-        settings = Docker.Settings.from_file(conf_file_path)
-        try :
-            results = Docker.Results(settings)
-            poses = results.ligands
-        except RuntimeError:
-            poses = None
+        
+        poses = None
+        docked_ligands_path = os.path.join(directory,
+                                           self.gold_docker.docked_ligand_name)
+        if os.path.exists(docked_ligands_path) :
+            poses_reader = Docker.Results.DockedLigandReader(docked_ligands_path,
+                                                             settings=None)
+            poses = [pose for pose in poses_reader]
+        
+        # conf_file_path = os.path.join(directory, 
+        #                               'api_gold.conf')
+        # settings = Docker.Settings.from_file(conf_file_path)
+        # try :
+        #     results = Docker.Results(settings)
+        #     poses = [pose for pose in results.ligands]
+        # except RuntimeError:
+        #     poses = None
+        
         return poses
         
+        
+    def load_poses(self) :
+        dude_docking_dir = os.path.join(self.gold_docker.output_dir,
+                                        self.gold_docker.experiment_id)
+        docked_dirs = os.listdir(dude_docking_dir)
+        active_dirs = [os.path.join(dude_docking_dir, d)
+                       for d in docked_dirs 
+                       if 'active' in d]
+        decoy_dirs = [os.path.join(dude_docking_dir, d) 
+                      for d in docked_dirs 
+                      if 'decoy' in d]
+        
+        active_poses = []
+        for active_dir in tqdm(active_dirs) :
+            poses = self.get_poses(active_dir)
+            if poses :
+                active_poses.append(poses)
+                
+        decoy_poses = []
+        for decoy_dir in tqdm(decoy_dirs) :
+            poses = self.get_poses(decoy_dir)
+            if poses :
+                decoy_poses.append(poses)
+                
+        return active_poses, decoy_poses
             
 if __name__ == '__main__':
     dude_docking = DUDEDocking()
     dude_docking.dock()
     dude_docking.ef_analysis()
+    
+# JAK2
+# model ef5 = 6.34 bedroc = 0.36
+# energy 5.12 0.30
+# score 6.21 0.35
+# random 5.54 0.28

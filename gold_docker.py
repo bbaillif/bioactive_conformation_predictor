@@ -73,11 +73,13 @@ class GOLDDocker() :
                                                  ligand=self.native_ligand)
         self.settings.binding_site = bs
             
+        self.docked_ligand_name = 'docked_ligands.mol2'
 
     def dock_molecule(self, 
                       ccdc_mol: Molecule,
                       mol_id: str,
                       n_poses: int=20,
+                      rigid: bool=False,
                       return_runtime: bool=False,
                       ):
         """Dock a single molecule using GOLD 
@@ -89,11 +91,18 @@ class GOLDDocker() :
         :type mol_id: str
         :param n_poses: Number of output poses of docking
         :type n_poses: int
+        :param rigid: Fix the torsions to perform rigid ligand docking
+        :type rigid: bool
         :param return_runtime: Whether or not to return docking runtime
         :type return_runtime: bool
         :return: docking results and runtime if asked
         :rtype: DockingResults (and float if return_runtime)
         """
+        
+        if rigid :
+            self.settings.fix_ligand_rotatable_bonds = 'all'
+        else :
+            self.settings.fix_ligand_rotatable_bonds = None
         
         mol_output_dir = os.path.join(self.output_dir,
                                       self.experiment_id,
@@ -103,7 +112,7 @@ class GOLDDocker() :
         self.settings.output_directory = mol_output_dir
         
         poses_output_file = os.path.join(mol_output_dir, 
-                                         f'docked_ligands.mol2')
+                                         self.docked_ligand_name)
         self.settings.output_file = poses_output_file
 
         original_ligand_file = os.path.join(mol_output_dir, 
