@@ -3,195 +3,254 @@ import sys
 import numpy as np
 import pickle
 import torch
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 from tqdm import tqdm
 from rdkit import Chem
 from pdbbind_metadata_processor import PDBBindMetadataProcessor
+from ccdc_rdkit_connector import CcdcRdkitConnector
 
-
+from collections import defaultdict
 from rdkit.ML.Scoring.Scoring import CalcEnrichment, CalcBEDROC
 from ccdc.io import MoleculeReader
 from molecule_featurizer import MoleculeFeaturizer
 from litschnet import LitSchNet
 from ccdc.docking import Docker
+from ccdc.descriptors import MolecularDescriptors
 from gold_docker import GOLDDocker
 from pose_selector import (RandomPoseSelector,
                            ScorePoseSelector,
                            EnergyPoseSelector,
                            ModelPoseSelector)
 
+
 class PDBBindDocking() :
     
-    def __init__(self):
+    def __init__(self,
+                 output_dir='gold_docking_pdbbind'):
+        
+        self.output_dir = output_dir
         
         self.pdbbind_metadata_processor = PDBBindMetadataProcessor()
         
-    def dock_molecule(self, 
+        self.mol_featurizer = MoleculeFeaturizer()
+        
+        self.model_checkpoint_dir = os.path.join('lightning_logs',
+                                                  'random_split_0_new',
+                                                  'checkpoints')
+        self.model_checkpoint_name = os.listdir(self.model_checkpoint_dir)[0]
+        self.model_checkpoint_path = os.path.join(self.model_checkpoint_dir,
+                                                  self.model_checkpoint_name)
+        self.model = LitSchNet.load_from_checkpoint(self.model_checkpoint_path)
+        self.model.eval()
+        
+        if torch.cuda.is_available() :
+            self.model = self.model.to('cuda')
+        
+        # ratio = 1 for each selector simply ranks the poses according to the
+        # selection scheme
+        self.pose_selectors = {
+            'model' : ModelPoseSelector(model=self.model,
+                                        mol_featurizer=self.mol_featurizer,
+                                        ratio=1),
+            'random' : RandomPoseSelector(ratio=1),
+            'score' : ScorePoseSelector(ratio=1),
+            'energy' : EnergyPoseSelector(mol_featurizer=self.mol_featurizer,
+                                         ratio=1)
+        }
+        
+        self.flexible_mol_id = 'flexible_mol'
+        self.rigid_mol_id = 'rigid_confs'
+        
+    def dock_molecule_conformations(self, 
                       ccdc_mols, # represents different conformations
                       pdb_id) :
         
         protein_path, ligand_path = self.pdbbind_metadata_processor.get_pdb_id_pathes(pdb_id=pdb_id)
-        self.gold_docker = GOLDDocker(protein_path=self.protein_path,
-                                 native_ligand_path=self.ligand_path,
-                                 experiment_id=pdb_id)
+        self.gold_docker = GOLDDocker(protein_path=protein_path,
+                                      native_ligand_path=ligand_path,
+                                      experiment_id=pdb_id,
+                                      output_dir=self.output_dir)
         
-        for mol_i, ccdc_mol in enumerate(ccdc_mols) :
-            self.gold_docker.dock_molecule(ccdc_mol=ccdc_mol,
-                                           mol_id=f'{mol_i}')
-            self.gold_docker.dock_molecule(ccdc_mol=ccdc_mol,
-                                           mol_id=f'{mol_i}_rigid',
-                                           rigid=True)
-          
-if __name__ == '__main__':
-    dude_docking = PDBBindDocking()
-    dude_docking.dock()
-            
-    # TODO : for each threshold n_confs, we :
-    # - take the n_confs for each ranker
-    # - take the best pose for each conf
-    # - compute docking_power/top score
-    # plot n_confs vs docking_power
-    # compare with flexible docking
+        first_generated_mol = ccdc_mols[0]
+        self.gold_docker.dock_molecule(ccdc_mol=first_generated_mol,
+                                       mol_id=self.flexible_mol_id)
+        self.gold_docker.dock_molecules(ccdc_mols=ccdc_mols,
+                                       mol_id=self.rigid_mol_id,
+                                       rigid=True)
         
-#         self.mol_featurizer = MoleculeFeaturizer()
+    def get_top_poses(self,
+                      pdb_id,
+                      rigid=True):
+        """For multiple ligand docking, return the top pose for each ligand
+        (a ligand is a distinct conf of a molecule in the context of rigid 
+        docking)
         
-#         self.model_checkpoint_dir = os.path.join('lightning_logs',
-#                                                   'random_split_0_new',
-#                                                   'checkpoints')
-#         self.model_checkpoint_name = os.listdir(self.model_checkpoint_dir)[0]
-#         self.model_checkpoint_path = os.path.join(self.model_checkpoint_dir,
-#                                                   self.model_checkpoint_name)
-#         self.model = LitSchNet.load_from_checkpoint(self.model_checkpoint_path)
-#         self.model.eval()
+        :param pdb_id: PDB_ID of the molecule, useful to retrieve output dir
+        :type pdb_id: str
+        :return: List of top poses, one per ligand name
+        :rtupe: list[ccdc.docking.Docker.Results.DockedLigand]
+        """
         
-#         if torch.cuda.is_available() :
-#             self.model = self.model.to('cuda')
+        top_poses = None 
         
-#         self.pose_selectors = {
-#             'random' : RandomPoseSelector(number=1),
-#             'score' : ScorePoseSelector(number=1),
-#             'energy' : EnergyPoseSelector(mol_featurizer=self.mol_featurizer,
-#                                          number=1),
-#             'model' : ModelPoseSelector(model=self.model,
-#                                         mol_featurizer=self.mol_featurizer,
-#                                         number=1)
-#         }
-        
-#     def dock(self) :
-#         active_mols = MoleculeReader(self.actives_path)
-#         decoy_mols = MoleculeReader(self.decoys_path)
-        
-#         for i, ccdc_mol in enumerate(active_mols) :
-#             mol_id = f'active_{i}'
-#             try :
-#                 results = self.gold_docker.dock_molecule(ccdc_mol=ccdc_mol,
-#                                         mol_id=mol_id)
-#             except KeyboardInterrupt :
-#                 sys.exit(0)
-#             except :
-#                 print(f'Docking failed for {mol_id}')
-            
-#         for i, ccdc_mol in enumerate(decoy_mols) :
-#             mol_id = f'decoys_{i}'
-#             try :
-#                 results = self.gold_docker.dock_molecule(ccdc_mol=ccdc_mol,
-#                                         mol_id=mol_id)
-#             except KeyboardInterrupt :
-#                 sys.exit(0)
-#             except :
-#                 print(f'Docking failed for {mol_id}')
-                
-#     def ef_analysis(self) :
-        
-#         active_poses, decoy_poses = self.load_poses()
-                
-#         for selector_name, pose_selector in self.pose_selectors.items() :
-#             active_selected_poses = []
-#             for poses in tqdm(active_poses) :
-#                 selected_poses = pose_selector.select_poses(poses)
-#                 if selected_poses :
-#                     selected_pose = selected_poses[0]
-#                     active_selected_poses.append(selected_pose)
-#             decoy_selected_poses = []
-#             for poses in tqdm(decoy_poses) :
-#                 selected_poses = pose_selector.select_poses(poses)
-#                 if selected_poses :
-#                     selected_pose = selected_poses[0]
-#                     decoy_selected_poses.append(selected_pose)
+        if rigid :
+            subset = self.rigid_mol_id
+        else :
+            subset = self.flexible_mol_id
+        docked_ligand_file = os.path.join(self.output_dir,
+                                          pdb_id,
+                                          subset,
+                                          'docked_ligands.mol2')
+        if os.path.exists(docked_ligand_file) :
+            poses = Docker.Results.DockedLigandReader(docked_ligand_file, 
+                                                        settings=None)
+
+            top_poses = []
+            seen_ligands = []
+            for pose in poses :
+                identifier = pose.identifier
+                lig_num = identifier.split('|')[1]
+                if not lig_num in seen_ligands :
+                    top_poses.append(pose)
+                    seen_ligands.append(lig_num)
                     
-#             active_2d_list = [[pose.fitness(), True] 
-#                               for pose in active_selected_poses]
-#             decoy_2d_list = [[pose.fitness(), False] 
-#                              for pose in decoy_selected_poses]
-            
-#             all_2d_list = active_2d_list + decoy_2d_list
-#             all_2d_array = np.array(all_2d_list)
-            
-#             sorting = np.argsort(-all_2d_array[:, 0])
-#             sorted_2d_array = all_2d_array[sorting]
-
-#             ef = CalcEnrichment(sorted_2d_array, 
-#                                 col=1,
-#                                 fractions=[0.05])[0]
-#             print(f'{selector_name} has EF5% of {ef}')
-            
-#             bedroc = CalcBEDROC(sorted_2d_array, 
-#                                 col=1, 
-#                                 alpha=20)
-#             print(f'{selector_name} has BEDROC of {bedroc}')
-        
-
-#     def get_poses(self, directory) :
-        
-#         poses = None
-#         docked_ligands_path = os.path.join(directory,
-#                                            self.gold_docker.docked_ligand_name)
-#         if os.path.exists(docked_ligands_path) :
-#             poses_reader = Docker.Results.DockedLigandReader(docked_ligands_path,
-#                                                              settings=None)
-#             poses = [pose for pose in poses_reader]
-        
-#         # conf_file_path = os.path.join(directory, 
-#         #                               'api_gold.conf')
-#         # settings = Docker.Settings.from_file(conf_file_path)
-#         # try :
-#         #     results = Docker.Results(settings)
-#         #     poses = [pose for pose in results.ligands]
-#         # except RuntimeError:
-#         #     poses = None
-        
-#         return poses
-        
-        
-#     def load_poses(self) :
-#         dude_docking_dir = os.path.join(self.gold_docker.output_dir,
-#                                         self.gold_docker.experiment_id)
-#         docked_dirs = os.listdir(dude_docking_dir)
-#         active_dirs = [os.path.join(dude_docking_dir, d)
-#                        for d in docked_dirs 
-#                        if 'active' in d]
-#         decoy_dirs = [os.path.join(dude_docking_dir, d) 
-#                       for d in docked_dirs 
-#                       if 'decoy' in d]
-        
-#         active_poses = []
-#         for active_dir in tqdm(active_dirs) :
-#             poses = self.get_poses(active_dir)
-#             if poses :
-#                 active_poses.append(poses)
-                
-#         decoy_poses = []
-#         for decoy_dir in tqdm(decoy_dirs) :
-#             poses = self.get_poses(decoy_dir)
-#             if poses :
-#                 decoy_poses.append(poses)
-                
-#         return active_poses, decoy_poses
-            
-
+        return top_poses
     
-# JAK2
-# model ef5 = 6.34 bedroc = 0.36
-# energy 5.12 0.30
-# score 6.21 0.35
-# random 5.54 0.28
+    def docking_analysis(self,
+                         pdb_ids):
+        
+        self.top_indexes = {}
+        self.top_indexes['score'] = defaultdict(list)
+        self.top_indexes['rmsd'] = defaultdict(list)
+        
+        flexible_result = defaultdict(list)
+        
+        with open('data/raw/ccdc_generated_conf_ensemble_library.p', 'rb') as f:
+            cel = pickle.load(f)
+        
+        for pdb_id in pdb_ids :
+            flexible_poses = self.get_top_poses(pdb_id, rigid=False)
+            rigid_poses = self.get_top_poses(pdb_id)
+            if flexible_poses and rigid_poses :
+                flexible_top_pose = flexible_poses[0]
+                
+                # protein_path, ligand_path = self.pdbbind_metadata_processor.get_pdb_id_pathes(pdb_id=pdb_id)
+                # native_ligand = MoleculeReader(ligand_path)[0]
+                
+                ccdc_rdkit_connector = CcdcRdkitConnector()
+                native_ligand = [ce.mol 
+                                for smiles, ce in cel.get_unique_molecules()
+                                if ce.mol.GetConformer().GetProp('PDB_ID') == pdb_id][0]
+                native_ligand = ccdc_rdkit_connector.rdkit_conf_to_ccdc_mol(rdkit_mol=native_ligand,
+                                                                            conf_id=0)
+                included = True
+                for selector_name, pose_selector in self.pose_selectors.items() :
+                    sorted_poses = pose_selector.select_poses(poses=rigid_poses)
+                    
+                    if sorted_poses and included: # if mol_featurizer fails, sorted_poses is None
+                    
+                        self.evaluate_ranker(poses=sorted_poses,
+                                             native_ligand=native_ligand,
+                                             ranker_name=selector_name)
+                        
+                    else :
+                        included = False
+                
+                if included :
+                    self.evaluate_ranker(poses=rigid_poses,
+                                         native_ligand=native_ligand,
+                                         ranker_name='CCDC')
+                    
+                    scores, ligand_rmsds, overlay_rmsds = self.evaluate_poses(poses=flexible_poses,
+                                                                    native_ligand=native_ligand)
+                    flexible_result['score'].append(scores[0])
+                    flexible_result['rmsd'].append(ligand_rmsds[0])
+            
+        # Produce lineplots
+        for metric, top_indexes_metric in self.top_indexes.items():
+            for ranker, top_indexes_task in top_indexes_metric.items():
+                top_indexes_task = np.array(top_indexes_task)
+            
+                thresholds = range(100)
+                recalls = []
+                for threshold in thresholds :
+                    recalls.append(np.sum(top_indexes_task <= threshold))
+                    
+                sns.lineplot(x=thresholds, y=recalls, label=ranker)
+            
+            #plt.axhline(y=flexible_score, label='flexible')
+                
+            plt.title(f'Retrieval of top {metric}')
+            plt.xlabel('Conformation rank')
+            plt.ylabel('Number of retrieved molecule (rank is best)')
+            plt.savefig(f'retrieval_{metric}')
+            plt.clf()
+                
+    def evaluate_ranker(self, 
+                        poses, 
+                        native_ligand,
+                        ranker_name):
+        scores, ligand_rmsds, overlay_rmsds = self.evaluate_poses(poses=poses,
+                                                                  native_ligand=native_ligand)
+        score_argsort = np.array(scores).argsort()
+        rmsd_argsort = np.array(ligand_rmsds).argsort()
+        self.top_indexes['score'][ranker_name].append(score_argsort[0])
+        self.top_indexes['rmsd'][ranker_name].append(rmsd_argsort[0])
+        
+                
+    def evaluate_poses(self,
+                      poses, 
+                      native_ligand):
+        
+        scores = []
+        ligand_rmsds = []
+        overlay_rmsds = []
+        for pose in poses :
+            mol = pose.molecule
+            mol.remove_atoms([atom for atom in mol.atoms if atom.atomic_number < 2])
+            scores.append(pose.fitness())
+            ligand_rmsds.append(MolecularDescriptors.rmsd(native_ligand, 
+                                                          mol, 
+                                                          overlay=False))
+            overlay_rmsds.append(MolecularDescriptors.rmsd(native_ligand, 
+                                                           mol))
+        return scores, ligand_rmsds, overlay_rmsds
+        
+        
+if __name__ == '__main__':
+    pdbbind_docking = PDBBindDocking()
+    
+    ccdc_rdkit_connector = CcdcRdkitConnector()
+    
+    with open('data/random_splits/test_smiles_random_split_0.txt') as f:
+        test_smiles = f.readlines()
+        
+    with open('data/raw/ccdc_generated_conf_ensemble_library.p', 'rb') as f:
+        cel = pickle.load(f)
+    
+    successful_pdb_ids = []
+    for smiles, ce in cel.get_unique_molecules():
+        rdkit_mol = ce.mol
+        bioactive_conf = rdkit_mol.GetConformer(0)
+        pdb_id = bioactive_conf.GetProp('PDB_ID')
+        generated_conf_ids = [conf.GetId()
+                              for conf in rdkit_mol.GetConformers()
+                              if conf.HasProp('Generator')]
+            
+        try :
+            ccdc_mols = [ccdc_rdkit_connector.rdkit_conf_to_ccdc_mol(rdkit_mol=rdkit_mol,
+                                                                    conf_id=conf_id)
+                        for conf_id in generated_conf_ids]
+            if len(ccdc_mols) == 100 :
+                pdbbind_docking.dock_molecule_conformations(ccdc_mols, pdb_id)
+            successful_pdb_ids.append(pdb_id)
+        except KeyboardInterrupt :
+            sys.exit(0)
+        except :
+            print(f'Docking failed for {pdb_id}')
+            
+    pdbbind_docking.docking_analysis(pdb_ids=successful_pdb_ids)

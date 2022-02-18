@@ -22,16 +22,28 @@ class PoseSelector():
                      poses):
         pass
     
-    def filter_subset(self,
-                      poses,
-                      values,
-                      ascending=True):
+    def get_sorted_indexes(self, 
+                           poses,
+                           values,
+                           ascending=True) :
+        
         values = np.array(values)
         
         if not ascending :
             values = -values
             
         sorted_indexes = values.argsort()
+        
+        return sorted_indexes
+    
+    def filter_subset(self,
+                      poses,
+                      values,
+                      ascending=True):
+        
+        sorted_indexes = self.get_sorted_indexes(poses=poses,
+                                                 values=values,
+                                                 ascending=ascending)
             
         if self.number is not None:
             assert self.number < len(values), \
@@ -40,9 +52,8 @@ class PoseSelector():
         else :
             limit = int(len(values) * self.ratio)
         selected_indexes = sorted_indexes[:limit]
-        poses_subset = [pose 
-                        for i, pose in enumerate(poses) 
-                        if i in selected_indexes]
+        poses_subset = [poses[i]
+                        for i in selected_indexes]
         
         return poses_subset
         

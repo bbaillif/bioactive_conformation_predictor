@@ -80,8 +80,7 @@ class GOLDDocker() :
                       mol_id: str,
                       n_poses: int=20,
                       rigid: bool=False,
-                      return_runtime: bool=False,
-                      ):
+                      return_runtime: bool=False,):
         """Dock a single molecule using GOLD 
         
         :param ccdc_mol: Molecule to dock
@@ -98,6 +97,37 @@ class GOLDDocker() :
         :return: docking results and runtime if asked
         :rtype: DockingResults (and float if return_runtime)
         """
+        return self.dock_molecules(ccdc_mols=[ccdc_mol],
+                                    mol_id=mol_id,
+                                    n_poses=n_poses,
+                                    rigid=rigid,
+                                    return_runtime=return_runtime)
+
+    def dock_molecules(self, 
+                      ccdc_mols: Molecule,
+                      mol_id: str,
+                      n_poses: int=20,
+                      rigid: bool=False,
+                      return_runtime: bool=False,
+                      ):
+        """Dock molecules using GOLD 
+        
+        :param ccdc_mols: Molecules to dock
+        :type ccdc_mols: list[ccdc.io.Molecule]
+        :param mol_id: identifier to give to the molecule (for results 
+            directory)
+        :type mol_id: str
+        :param n_poses: Number of output poses of docking
+        :type n_poses: int
+        :param rigid: Fix the torsions to perform rigid ligand docking
+        :type rigid: bool
+        :param return_runtime: Whether or not to return docking runtime
+        :type return_runtime: bool
+        :return: docking results and runtime if asked
+        :rtype: DockingResults (and float if return_runtime)
+        """
+        
+        self.settings.clear_ligand_files() # avoid docking previous ligands
         
         if rigid :
             self.settings.fix_ligand_rotatable_bonds = 'all'
@@ -115,11 +145,12 @@ class GOLDDocker() :
                                          self.docked_ligand_name)
         self.settings.output_file = poses_output_file
 
-        original_ligand_file = os.path.join(mol_output_dir, 
-                                            f'original_ligand.mol2')
-        self.prepare_ligand(ccdc_mol=ccdc_mol,
-                            ligand_file=original_ligand_file,
-                            n_poses=n_poses)
+        for conf_id, ccdc_mol in enumerate(ccdc_mols) :
+            ligand_file = os.path.join(mol_output_dir, 
+                                                f'ligand_{conf_id}.mol2')
+            self.prepare_ligand(ccdc_mol=ccdc_mol,
+                                ligand_file=ligand_file,
+                                n_poses=n_poses)
         
         start_time = time.time()
         conf_file_name = os.path.join(mol_output_dir, f'api_gold.conf')
@@ -143,5 +174,4 @@ class GOLDDocker() :
         mol2_string = ligand.to_string(format='mol2')
         with open(ligand_file, 'w') as writer :
             writer.write(mol2_string)
-        self.settings.clear_ligand_files()
         self.settings.add_ligand_file(ligand_file, n_poses)
