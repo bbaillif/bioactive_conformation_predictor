@@ -137,15 +137,6 @@ class DUDEDocking() :
                                                              settings=None)
             poses = [pose for pose in poses_reader]
         
-        # conf_file_path = os.path.join(directory, 
-        #                               'api_gold.conf')
-        # settings = Docker.Settings.from_file(conf_file_path)
-        # try :
-        #     results = Docker.Results(settings)
-        #     poses = [pose for pose in results.ligands]
-        # except RuntimeError:
-        #     poses = None
-        
         return poses
         
         
@@ -178,6 +169,9 @@ if __name__ == '__main__':
     dude_docking = DUDEDocking()
     dude_docking.dock()
     dude_docking.ef_analysis()
+    
+# TODO : iterate over targets
+# TODO : store results in jsons for each target
     
 # JAK2
 # model ef5 = 6.34 bedroc = 0.36

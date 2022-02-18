@@ -196,7 +196,7 @@ class PDBBindDocking() :
                         ranker_name):
         scores, ligand_rmsds, overlay_rmsds = self.evaluate_poses(poses=poses,
                                                                   native_ligand=native_ligand)
-        score_argsort = np.array(scores).argsort()
+        score_argsort = np.negative(scores).argsort()
         rmsd_argsort = np.array(ligand_rmsds).argsort()
         self.top_indexes['score'][ranker_name].append(score_argsort[0])
         self.top_indexes['rmsd'][ranker_name].append(rmsd_argsort[0])
