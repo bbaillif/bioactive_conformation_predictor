@@ -8,9 +8,9 @@ pdbbind_docking = PDBBindDocking()
 #                       '3gnv', '2pg2', '6drz', '6ge0', 
 #                       '2o22', '2nns', '6oip', '1wbw', 
 #                       '5bqh', '2oh0', '5fqv', '2v3e', 
-#                       '3d67', '3ti8']  
+#                       '3d67', '3ti8']
 successful_pdb_ids = os.listdir('gold_docking_pdbbind')
 start_time = time.time()  
-pdbbind_docking.docking_analysis(pdb_ids=successful_pdb_ids)
+pdbbind_docking.docking_analysis(pdb_ids=successful_pdb_ids[:200])
 runtime = time.time() - start_time
 print(f'{runtime} seconds runtime')

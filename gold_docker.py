@@ -52,6 +52,8 @@ class GOLDDocker() :
         self.settings.autoscale = 10.
         self.settings.early_termination = False
         self.settings.diverse_solutions = True
+        
+        self.settings.write_options= ['NO_FIT_PTS_FILES']
 
         self.ligand_preparation = Docker.LigandPreparation()
         

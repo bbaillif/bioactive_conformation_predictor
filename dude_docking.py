@@ -7,17 +7,27 @@ import torch
 from tqdm import tqdm
 from rdkit import Chem
 from rdkit.ML.Scoring.Scoring import CalcEnrichment, CalcBEDROC
-from ccdc.io import MoleculeReader
+from ccdc.io import MoleculeReader, EntryReader
 from molecule_featurizer import MoleculeFeaturizer
 from litschnet import LitSchNet
 from ccdc.docking import Docker
 from gold_docker import GOLDDocker
-from pose_selector import (RandomPoseSelector,
+from pose_selector import (Pose,
+                           RandomPoseSelector,
                            ScorePoseSelector,
                            EnergyPoseSelector,
                            ModelPoseSelector)
 
 class DUDEDocking() :
+    """ Performs docking for actives and decoys for a target in DUD-E
+    Generated 20 poses per molecule, and compares virtual screening performances
+    for different selectors (model, energy, random...)
+    
+    :param target: Target to dock
+    :type target: str
+    :param dude_dir: Directory path to DUD-E data
+    :type dude_dir: str
+    """
     
     def __init__(self,
                  target='jak2',
@@ -64,6 +74,9 @@ class DUDEDocking() :
         }
         
     def dock(self) :
+        """Performs docking for actives and decoy for setup target
+        
+        """
         active_mols = MoleculeReader(self.actives_path)
         decoy_mols = MoleculeReader(self.decoys_path)
         
@@ -88,6 +101,11 @@ class DUDEDocking() :
                 print(f'Docking failed for {mol_id}')
                 
     def ef_analysis(self) :
+        """Analyse virtual screening results depending on the ranker used
+        to select each molecule pose. Evaluated rankers are model (DL model
+        for bioactive RMSD prediction), energy, score and random.
+        
+        """
         
         active_poses, decoy_poses = self.load_poses()
                 
@@ -128,19 +146,34 @@ class DUDEDocking() :
         
 
     def get_poses(self, directory) :
+        """Obtain poses for a given directory (referring to a molecule)
+        
+        :param directory: directory for GOLD docking of a single molecule
+        :type directory: str
+        :return: list of poses
+        :rtype: list[Pose]
+        """
         
         poses = None
         docked_ligands_path = os.path.join(directory,
                                            self.gold_docker.docked_ligand_name)
         if os.path.exists(docked_ligands_path) :
-            poses_reader = Docker.Results.DockedLigandReader(docked_ligands_path,
-                                                             settings=None)
-            poses = [pose for pose in poses_reader]
+            # poses_reader = Docker.Results.DockedLigandReader(docked_ligands_path,
+            #                                                  settings=None)
+            poses_reader = EntryReader(docked_ligands_path)
+            poses = [Pose(pose) for pose in poses_reader]
         
         return poses
         
         
     def load_poses(self) :
+        """Get active and decoys poses
+        
+        :return: List of list of poses, one element per molecule, one for 
+            actives and one for inactives
+        :rtype: list[list[Pose]]
+        
+        """
         dude_docking_dir = os.path.join(self.gold_docker.output_dir,
                                         self.gold_docker.experiment_id)
         docked_dirs = os.listdir(dude_docking_dir)
@@ -152,13 +185,13 @@ class DUDEDocking() :
                       if 'decoy' in d]
         
         active_poses = []
-        for active_dir in tqdm(active_dirs) :
+        for active_dir in tqdm(active_dirs[:500]) :
             poses = self.get_poses(active_dir)
             if poses :
                 active_poses.append(poses)
                 
         decoy_poses = []
-        for decoy_dir in tqdm(decoy_dirs) :
+        for decoy_dir in tqdm(decoy_dirs[:5000]) :
             poses = self.get_poses(decoy_dir)
             if poses :
                 decoy_poses.append(poses)
@@ -166,7 +199,7 @@ class DUDEDocking() :
         return active_poses, decoy_poses
             
 if __name__ == '__main__':
-    dude_docking = DUDEDocking()
+    dude_docking = DUDEDocking(target='drd3')
     dude_docking.dock()
     dude_docking.ef_analysis()
     
@@ -178,3 +211,9 @@ if __name__ == '__main__':
 # energy 5.12 0.30
 # score 6.21 0.35
 # random 5.54 0.28
+
+# DRD3
+# model ef5 = 1.44 bedroc 0.18
+# energy 1.91 bedroc 0.19
+# score 1.43 0.18
+# random 2.07 0.20

@@ -6,7 +6,36 @@ from abc import abstractmethod
 from torch_geometric.data import Batch
 from ccdc_rdkit_connector import CcdcRdkitConnector, ConversionError
 
+
+class Pose() :
+    """Class to store poses, simplifying the DockedLigand object from ccdc
+    to only a molecule and a score
+    
+    :param pose: entry corresponding to docking pose
+    :type pose: ccdc.io.Entry
+    """
+    
+    def __init__(self,
+                 pose) -> None:
+        self.molecule = pose.molecule
+        self.score = float(pose.attributes['Gold.PLP.Fitness'])
+        
+    def fitness(self):
+        return self.score
+
 class PoseSelector():
+    """Base class for pose selectors, that can sort poses depending on values,
+    and select topN poses for best values
+    
+    :param selector_name: Name given to the selector, to differentiate different
+        selectors in downstream tasks
+    :type selector_name: str
+    :param ratio: Ratio of poses that are selected by select_poses()
+    :type ratio: float
+    :param number: Number of poses that are selected by select_poses(). Default
+        is None to use the ratio, uses the number if defined
+    :type number: int
+    """
 
     def __init__(self,
                  selector_name: str,
@@ -20,12 +49,20 @@ class PoseSelector():
     @abstractmethod
     def select_poses(self,
                      poses):
+        """Abstract class, to be implemented in inherited classes"""
         pass
     
     def get_sorted_indexes(self, 
-                           poses,
                            values,
                            ascending=True) :
+        """Get the indexes to sort the list of values
+        
+        :param values: list of values to argsort
+        :type values: list
+        :param ascending: True if sorting needs to be ascending, False for 
+            descending order
+        :type ascending: bool
+        """
         
         values = np.array(values)
         
@@ -40,9 +77,19 @@ class PoseSelector():
                       poses,
                       values,
                       ascending=True):
+        """Filter a list of poses based on top values. Default will take ratio
+        of poses, unless number is defined in pose selector
         
-        sorted_indexes = self.get_sorted_indexes(poses=poses,
-                                                 values=values,
+        :param poses: list of poses to filter
+        :type poses: list[Poses]
+        :param values: values corresponding to each pose
+        :type values: list[float]
+        :param ascending: True if values sorting needs to be ascending, 
+            False for descending order
+        :type ascending: bool
+        """
+        
+        sorted_indexes = self.get_sorted_indexes(values=values,
                                                  ascending=ascending)
             
         if self.number is not None:
@@ -59,6 +106,7 @@ class PoseSelector():
         
         
 class RandomPoseSelector(PoseSelector) :
+    """Rank poses according to a random list of values"""
     
     def __init__(self,
                  selector_name: str='random',
@@ -75,6 +123,7 @@ class RandomPoseSelector(PoseSelector) :
         return poses_subset
   
 class ScorePoseSelector(PoseSelector):
+    """Rank poses according to docking score (pose.fitness())"""
     
     def __init__(self, 
                  selector_name: str='score',
@@ -92,6 +141,11 @@ class ScorePoseSelector(PoseSelector):
         return poses_subset
         
 class EnergyPoseSelector(PoseSelector):
+    """Rank poses according to their energy (computed in mol featurizer)
+    
+    :param mol_featurizer: object used to featurize molecule for neural networks
+    :type mol_featurizer: MoleculeFeaturizer
+    """
     
     def __init__(self, 
                  mol_featurizer,
@@ -121,6 +175,13 @@ class EnergyPoseSelector(PoseSelector):
         return poses_subset
         
 class ModelPoseSelector(PoseSelector):
+    """Rank values according to their predicted RMSD values (model predictions)
+    
+    :param model: RMSD prediction model (trained)
+    :type model: LitSchNet
+    :param mol_featurizer: object used to featurize molecule for neural networks
+    :type mol_featurizer: MoleculeFeaturizer
+    """
     
     def __init__(self, 
                 model,
@@ -143,15 +204,13 @@ class ModelPoseSelector(PoseSelector):
             try :
                 data_list = self.mol_featurizer.featurize_mol(rdkit_mol)
                 batch = Batch.from_data_list(data_list)
-                if torch.cuda.is_available() :
-                    batch = batch.to('cuda')
+                batch = batch.to(self.model)
                     
                 with torch.no_grad() :
                     preds = self.model(batch).cpu().numpy()
                     preds = preds.reshape(-1)
                 
-                top20_preds = preds.argsort()[:20]
-                poses_subset = [pose for i, pose in enumerate(poses) if i in top20_preds]
+                poses_subset = self.filter_subset(poses, values=preds)
                 
             except AttributeError :
                 poses_subset = None

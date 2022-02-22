@@ -25,14 +25,26 @@ from pose_selector import (RandomPoseSelector,
                            ScorePoseSelector,
                            EnergyPoseSelector,
                            ModelPoseSelector)
+from multiprocessing import Pool
 
 
 class PDBBindDocking() :
     
     def __init__(self,
-                 output_dir='gold_docking_pdbbind'):
+                 output_dir='gold_docking_pdbbind',
+                 use_cuda=False):
         
         self.output_dir = output_dir
+        self.use_cuda = use_cuda
+        
+        self.ccdc_rdkit_connector = CcdcRdkitConnector()
+        
+        self.flexible_mol_id = 'flexible_mol'
+        self.rigid_mol_id = 'rigid_confs'
+        
+    def dock_molecule_conformations(self, 
+                      ccdc_mols, # represents different conformations
+                      pdb_id) :
         
         self.pdbbind_metadata_processor = PDBBindMetadataProcessor()
         
@@ -47,7 +59,7 @@ class PDBBindDocking() :
         self.model = LitSchNet.load_from_checkpoint(self.model_checkpoint_path)
         self.model.eval()
         
-        if torch.cuda.is_available() :
+        if self.use_cuda and torch.cuda.is_available() :
             self.model = self.model.to('cuda')
         
         # ratio = 1 for each selector simply ranks the poses according to the
@@ -62,13 +74,6 @@ class PDBBindDocking() :
                                          ratio=1)
         }
         
-        self.flexible_mol_id = 'flexible_mol'
-        self.rigid_mol_id = 'rigid_confs'
-        
-    def dock_molecule_conformations(self, 
-                      ccdc_mols, # represents different conformations
-                      pdb_id) :
-        
         protein_path, ligand_path = self.pdbbind_metadata_processor.get_pdb_id_pathes(pdb_id=pdb_id)
         self.gold_docker = GOLDDocker(protein_path=protein_path,
                                       native_ligand_path=ligand_path,
@@ -77,10 +82,44 @@ class PDBBindDocking() :
         
         first_generated_mol = ccdc_mols[0]
         self.gold_docker.dock_molecule(ccdc_mol=first_generated_mol,
-                                       mol_id=self.flexible_mol_id)
+                                       mol_id=self.flexible_mol_id,
+                                       n_poses=5)
         self.gold_docker.dock_molecules(ccdc_mols=ccdc_mols,
                                        mol_id=self.rigid_mol_id,
+                                       n_poses=5,
                                        rigid=True)
+        
+    def dock_molecule_pool(self,
+                           conf_ensembles):
+        params = []
+        for conf_ensemble in conf_ensembles :
+            rdkit_mol = conf_ensemble.mol
+            bioactive_conf = rdkit_mol.GetConformer(0)
+            pdb_id = bioactive_conf.GetProp('PDB_ID')
+            generated_conf_ids = [conf.GetId()
+                                for conf in rdkit_mol.GetConformers()
+                                if conf.HasProp('Generator')]
+                
+            try :
+                if len(generated_conf_ids) == 100 :
+                    params.append((rdkit_mol, pdb_id))
+            except :
+                print('Molecule pre-processing fails')
+                    
+        with Pool(processes=12, maxtasksperchild=1) as pool :
+            pool.map(self.dock_molecule_conformations_thread, params)
+            
+    def dock_molecule_conformations_thread(self,
+                                           params) :
+        rdkit_mol, pdb_id = params
+        generated_conf_ids = [conf.GetId()
+                                for conf in rdkit_mol.GetConformers()
+                                if conf.HasProp('Generator')]
+        ccdc_mols = [self.ccdc_rdkit_connector.rdkit_conf_to_ccdc_mol(rdkit_mol=rdkit_mol,
+                                                                        conf_id=conf_id)
+                            for conf_id in generated_conf_ids]
+        self.dock_molecule_conformations(ccdc_mols=ccdc_mols,
+                                         pdb_id=pdb_id)
         
     def get_top_poses(self,
                       pdb_id,
@@ -130,9 +169,9 @@ class PDBBindDocking() :
         flexible_result = defaultdict(list)
         
         with open('data/raw/ccdc_generated_conf_ensemble_library.p', 'rb') as f:
-            cel = pickle.load(f)
+            conf_ensemble_library = pickle.load(f)
         
-        for pdb_id in pdb_ids :
+        for pdb_id in tqdm(pdb_ids) :
             flexible_poses = self.get_top_poses(pdb_id, rigid=False)
             rigid_poses = self.get_top_poses(pdb_id)
             if flexible_poses and rigid_poses :
@@ -143,7 +182,7 @@ class PDBBindDocking() :
                 
                 ccdc_rdkit_connector = CcdcRdkitConnector()
                 native_ligand = [ce.mol 
-                                for smiles, ce in cel.get_unique_molecules()
+                                for smiles, ce in conf_ensemble_library.get_unique_molecules()
                                 if ce.mol.GetConformer().GetProp('PDB_ID') == pdb_id][0]
                 native_ligand = ccdc_rdkit_connector.rdkit_conf_to_ccdc_mol(rdkit_mol=native_ligand,
                                                                             conf_id=0)
@@ -173,6 +212,7 @@ class PDBBindDocking() :
         # Produce lineplots
         for metric, top_indexes_metric in self.top_indexes.items():
             for ranker, top_indexes_task in top_indexes_metric.items():
+                
                 top_indexes_task = np.array(top_indexes_task)
             
                 thresholds = range(100)
@@ -224,33 +264,51 @@ class PDBBindDocking() :
 if __name__ == '__main__':
     pdbbind_docking = PDBBindDocking()
     
-    ccdc_rdkit_connector = CcdcRdkitConnector()
-    
     with open('data/random_splits/test_smiles_random_split_0.txt') as f:
         test_smiles = f.readlines()
+        test_smiles = [smiles.strip() for smiles in test_smiles]
         
     with open('data/raw/ccdc_generated_conf_ensemble_library.p', 'rb') as f:
-        cel = pickle.load(f)
+        conf_ensemble_library = pickle.load(f)
     
-    successful_pdb_ids = []
-    for smiles, ce in cel.get_unique_molecules():
-        rdkit_mol = ce.mol
-        bioactive_conf = rdkit_mol.GetConformer(0)
-        pdb_id = bioactive_conf.GetProp('PDB_ID')
-        generated_conf_ids = [conf.GetId()
-                              for conf in rdkit_mol.GetConformers()
-                              if conf.HasProp('Generator')]
-            
+    conf_ensembles = []
+    for smiles in test_smiles :
         try :
-            ccdc_mols = [ccdc_rdkit_connector.rdkit_conf_to_ccdc_mol(rdkit_mol=rdkit_mol,
-                                                                    conf_id=conf_id)
-                        for conf_id in generated_conf_ids]
-            if len(ccdc_mols) == 100 :
-                pdbbind_docking.dock_molecule_conformations(ccdc_mols, pdb_id)
-            successful_pdb_ids.append(pdb_id)
-        except KeyboardInterrupt :
-            sys.exit(0)
-        except :
-            print(f'Docking failed for {pdb_id}')
+            conf_ensemble = conf_ensemble_library.get_conf_ensemble(smiles=smiles)
+            conf_ensembles.append(conf_ensemble)
+        except KeyError:
+            print('smiles not found in conf_ensemble')
+    
+    pdbbind_docking.dock_molecule_pool(conf_ensembles=conf_ensembles)
+    
+    
+    # ces = []
+    # for smiles, ce in conf_ensemble_library.get_unique_molecules():
+    #     rdkit_mol = ce.mol
+    #     bioactive_conf = rdkit_mol.GetConformer(0)
+    #     pdb_id = bioactive_conf.GetProp('PDB_ID')
+    #     generated_conf_ids = [conf.GetId()
+    #                           for conf in rdkit_mol.GetConformers()
+    #                           if conf.HasProp('Generator')]
             
-    pdbbind_docking.docking_analysis(pdb_ids=successful_pdb_ids)
+    #     try :
+    #         ccdc_mols = [ccdc_rdkit_connector.rdkit_conf_to_ccdc_mol(rdkit_mol=rdkit_mol,
+    #                                                                 conf_id=conf_id)
+    #                     for conf_id in generated_conf_ids]
+    #         if len(ccdc_mols) == 100 :
+    #             pdbbind_docking.dock_molecule_conformations(ccdc_mols, pdb_id)
+    #     except KeyboardInterrupt :
+    #         sys.exit(0)
+    #     except :
+    #         print(f'Docking failed for {pdb_id}')
+            
+    # params = []
+    # for i, smiles in enumerate(test_smiles) :
+    #     try :
+    #         ce = conf_ensemble_library.get_conf_ensemble(smiles)
+    #         params.append((i, smiles, ce))
+    #     except :
+    #         print('SMILES not in conf_ensemble_library')
+    # with Pool(12) as pool :
+    #     pool.map(dock_smiles, params)
+            
