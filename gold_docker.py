@@ -34,12 +34,14 @@ class GOLDDocker() :
                  native_ligand_path: str,
                  experiment_id: str,
                  output_dir: str='gold_docking_dude',
+                 prepare_protein: bool=False
                  ):
         
-        self.output_dir = os.path.abspath(output_dir)
         self.protein_path = protein_path
         self.native_ligand_path = native_ligand_path
         self.experiment_id = experiment_id
+        self.output_dir = os.path.abspath(output_dir)
+        self.prepare_protein = prepare_protein
         
         if not os.path.exists(self.output_dir) :
             os.mkdir(self.output_dir)
@@ -60,6 +62,8 @@ class GOLDDocker() :
         self.ccdc_rdkit_connector = CcdcRdkitConnector()
         
         self.settings.add_protein_file(protein_path)
+        if self.prepare_protein :
+            self.settings.proteins[0].add_hydrogens()
         self.settings.reference_ligand_file = native_ligand_path
         
         docker_output_dir = os.path.join(self.output_dir, 

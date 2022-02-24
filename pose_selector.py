@@ -7,6 +7,9 @@ from torch_geometric.data import Batch
 from ccdc_rdkit_connector import CcdcRdkitConnector, ConversionError
 
 
+class PoseSelectionError(Exception):
+    pass
+
 class Pose() :
     """Class to store poses, simplifying the DockedLigand object from ccdc
     to only a molecule and a score
@@ -19,6 +22,7 @@ class Pose() :
                  pose) -> None:
         self.molecule = pose.molecule
         self.score = float(pose.attributes['Gold.PLP.Fitness'])
+        self.identifier = pose.identifier
         
     def fitness(self):
         return self.score
@@ -159,6 +163,7 @@ class EnergyPoseSelector(PoseSelector):
     
     def select_poses(self,
                      poses,):
+        poses_subset = None
         try :
             rdkit_mol, new_conf_ids = self.ccdc_rdkit_connector.ccdc_ensemble_to_rdkit_mol(
                 ccdc_ensemble=poses
@@ -168,9 +173,12 @@ class EnergyPoseSelector(PoseSelector):
                 energies = [data.energy for data in data_list]
                 poses_subset = self.filter_subset(poses, values=energies)
             except AttributeError :
-                poses_subset = None
+                print('Energy computation bugging')
         except ConversionError :
-            poses_subset = None
+            print('RDKit to CCDC mol failed')
+            
+        if poses_subset is None :
+            raise PoseSelectionError()
             
         return poses_subset
         
@@ -197,6 +205,7 @@ class ModelPoseSelector(PoseSelector):
     
     def select_poses(self,
                      poses,):
+        poses_subset = None
         try :
             rdkit_mol, new_conf_ids = self.ccdc_rdkit_connector.ccdc_ensemble_to_rdkit_mol(
                 ccdc_ensemble=poses
@@ -204,7 +213,7 @@ class ModelPoseSelector(PoseSelector):
             try :
                 data_list = self.mol_featurizer.featurize_mol(rdkit_mol)
                 batch = Batch.from_data_list(data_list)
-                batch = batch.to(self.model)
+                batch = batch.to(self.model.device)
                     
                 with torch.no_grad() :
                     preds = self.model(batch).cpu().numpy()
@@ -213,8 +222,11 @@ class ModelPoseSelector(PoseSelector):
                 poses_subset = self.filter_subset(poses, values=preds)
                 
             except AttributeError :
-                poses_subset = None
+                print('Energy computation bugging')
         except ConversionError :
-            poses_subset = None
+            print('RDKit to CCDC mol failed')
+            
+        if poses_subset is None :
+            raise PoseSelectionError()
             
         return poses_subset

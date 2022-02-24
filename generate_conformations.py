@@ -1,4 +1,3 @@
-from tkinter import N
 from rdkit import Chem
 from ccdc_rdkit_connector import CcdcRdkitConnector
 from ccdc.conformer import ConformerGenerator

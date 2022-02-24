@@ -137,7 +137,6 @@ lightning_logs_old/
 logs/
 old/
 old_results/
-results/
 test_docking_ccdc/
 threeDTransformer/
 confs_for_gold/

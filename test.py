@@ -1,16 +1,23 @@
-from pdbbind_docking_preprocessing import PDBBindDocking
+from rigid_docking import RigidDocking
 import os
 import time
+import pickle
 
-pdbbind_docking = PDBBindDocking()
-# successful_pdb_ids = ['4uiu', '3sqq', '6bh0', '4jvb',
-#                       '4kn2', '4tkg', '3d8y', '5yz7', 
-#                       '3gnv', '2pg2', '6drz', '6ge0', 
-#                       '2o22', '2nns', '6oip', '1wbw', 
-#                       '5bqh', '2oh0', '5fqv', '2v3e', 
-#                       '3d67', '3ti8']
-successful_pdb_ids = os.listdir('gold_docking_pdbbind')
+with open('data/raw/ccdc_generated_conf_ensemble_library.p', 'rb') as f:
+            conf_ensemble_library = pickle.load(f)
+
+rigid_docking = RigidDocking()
+
+# pdbbind_docking.prepare_analysis()
+# pdb_id = '6etj'
+# rdkit_native_ligand = pdbbind_docking.get_native_ligand(pdb_id, 
+#                                                   conf_ensemble_library)
+# pdbbind_docking.analyze_pdb_id(pdb_id=pdb_id,
+#                                rdkit_native_ligand=rdkit_native_ligand)
+
 start_time = time.time()  
-pdbbind_docking.docking_analysis(pdb_ids=successful_pdb_ids[:200])
+rigid_docking.docking_analysis_pool()
 runtime = time.time() - start_time
 print(f'{runtime} seconds runtime')
+
+rigid_docking.analysis_report()

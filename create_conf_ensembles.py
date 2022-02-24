@@ -15,7 +15,7 @@ RDLogger.DisableLog('rdApp.*')
 # To be able to save conformer properties
 Chem.SetDefaultPickleProperties(Chem.PropertyPickleOptions.AllProps)
 
-parser = argparse.ArgumentParser(description='Process some integers.')
+parser = argparse.ArgumentParser(description='Select data where conf ensembles will be created')
 parser.add_argument('--data_dir', 
                     type=str, 
                     default='data/',
