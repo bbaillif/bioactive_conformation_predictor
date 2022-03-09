@@ -23,7 +23,9 @@ class CcdcRdkitConnector() :
     
     def ccdc_ensemble_to_rdkit_mol(self, 
                                    ccdc_ensemble, 
-                                   rdkit_mol=None) :
+                                   rdkit_mol=None, 
+                                   generated=False,
+                                   remove_input_conformers=False) :
         """Add ensemble to the given rdkit_mol, or to a new rdkit_mol
         
         :param ccdc_ensemble: Ensemble of subtypes of ccdc entries
@@ -49,17 +51,21 @@ class CcdcRdkitConnector() :
             if rdkit_mol is None :
                 raise ConversionError()
 
+        new_rdkit_mol = copy.deepcopy(rdkit_mol)
+        if remove_input_conformers :
+            new_rdkit_mol.RemoveAllConformers()
         for entry in ccdc_ensemble :
             new_rdkit_conf = copy.deepcopy(rdkit_mol).GetConformer()
             for i in range(new_rdkit_conf.GetNumAtoms()) :
                 atom = entry.molecule.atoms[i]
                 point3d = Point3D(*atom.coordinates)
                 new_rdkit_conf.SetAtomPosition(i, point3d)
-            new_rdkit_conf.SetProp('Generator', 'CCDC')
-            conf_id = rdkit_mol.AddConformer(new_rdkit_conf, assignId=True)
+            if generated :
+                new_rdkit_conf.SetProp('Generator', 'CCDC')
+            conf_id = new_rdkit_mol.AddConformer(new_rdkit_conf, assignId=True)
             new_conf_ids.append(conf_id)
         
-        return rdkit_mol, new_conf_ids
+        return new_rdkit_mol, new_conf_ids
     
     def ccdc_mol_to_rdkit_mol(self, ccdc_mol) :
         ccdc_mol.remove_atoms([atom 

@@ -2,12 +2,17 @@ import pandas as pd
 import os
 import pickle
 import argparse
-import seaborn as sns
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import seaborn as sns
 
-from conf_ensemble import ConfEnsembleLibrary
 from rdkit import Chem
-from rdkit import RDLogger                                                                                                                                                               
+from rdkit import RDLogger
+from conf_ensemble import ConfEnsembleLibrary
+from pdbbind_metadata_processor import PDBBindMetadataProcessor
+from platinum_processor import PlatinumProcessor
+                                                                                                                                                           
 
 # Disable the warning when mol2 files are not parsable
 RDLogger.DisableLog('rdApp.*') 
@@ -28,134 +33,35 @@ parser.add_argument('--figures_dir',
 args = parser.parse_args()
 data_dir_path = args.data_dir
 figures_dir_path = args.figures_dir
-
-# Extract PDBBind conformations
-pdbbind_refined_dir_path = '../PDBBind/PDBbind_v2020_refined/refined-set/'
-pdbbind_general_dir_path = '../PDBBind/PDBbind_v2020_other_PL/v2020-other-PL/'
-
-# defined using the metadata in the INDEX_general_PL_data file
-widths = [6, 6, 7, 6, 17, 9, 200]
-cols = ['PDB code', 
-        'resolution', 
-        'release year',
-        '-logKd/Ki',
-        'Kd/Ki',
-        'reference',
-        'ligand name']
-
-pl_data_path = os.path.join(pdbbind_refined_dir_path, 
-                            'index', 
-                            'INDEX_general_PL_data.2020')
-pl_data = pd.read_fwf(pl_data_path, widths=widths, skiprows=6, header=None)
-pl_data.columns=cols
-pl_data = pl_data[~pl_data['ligand name'].str.contains('-mer')]
-pl_data.shape
-
-correct_pdb_ids = pl_data['PDB code'].values
-
-def extract_pdbbind_mols(directory_path, query_pdb_ids) :
-    
-    mols = []
-    dirnames = os.listdir(directory_path)
-    pdb_ids = [pdb_id for pdb_id in dirnames if pdb_id in query_pdb_ids]
-    
-    for pdb_id in pdb_ids :
-        mol2_path = os.path.join(directory_path, 
-                                 pdb_id, 
-                                 f'{pdb_id}_ligand.mol2')
-        try :
-            mol = Chem.rdmolfiles.MolFromMol2File(mol2_path)
-            if mol is not None :
-                rdmol = Chem.MolFromSmiles(Chem.MolToSmiles(mol))
-                if rdmol is not None : #rdkit parsable
-                    #mol = PropertyMol(mol)
-                    mol.GetConformer().SetProp('PDB_ID', pdb_id)
-                    mols.append(mol)
-                else :
-                    print(f'{pdb_id} Not RDKit parsable')
-        except :
-            print('Impossible to read mol2 file for ' + pdb_id)
-            
-    return mols
-
-general_mols = extract_pdbbind_mols(pdbbind_general_dir_path, correct_pdb_ids)
-print(f'There are {len(general_mols)} mols in PDBBind general')
-pdbbind_general_mols_path = os.path.join(data_dir_path, 
-                                         'pdbbind_general_mol_list.p')
-with open(pdbbind_general_mols_path , 'wb') as f :
-    pickle.dump(general_mols, f)
-    
-general_CEL = ConfEnsembleLibrary(general_mols)
-pdbbind_general_cel_path = os.path.join(data_dir_path, 
-                                        'raw', 
-                                        'pdbbind_general_cel.p')
-with open(pdbbind_general_cel_path, 'wb') as f :
-    pickle.dump(general_CEL, f)
-
-refined_mols = extract_pdbbind_mols(pdbbind_refined_dir_path, correct_pdb_ids)
-pdbbind_refined_mols_path = os.path.join(data_dir_path, 
-                                         'pdbbind_refined_mol_list.p')
-with open(pdbbind_refined_mols_path , 'wb') as f :
-    pickle.dump(refined_mols, f)
-    
-refined_CEL = ConfEnsembleLibrary(refined_mols)
-pdbbind_refined_cel_path = os.path.join(data_dir_path, 
-                                        'raw', 
-                                        'pdbbind_refined_cel.p')
-with open(pdbbind_refined_cel_path, 'wb') as f :
-    pickle.dump(refined_CEL, f)
-
-pdbbind_CEL = general_CEL.merge(refined_CEL)
 os.makedirs(os.path.join(data_dir_path, 'raw'), exist_ok=True)
-pdbbind_cel_path = os.path.join(data_dir_path, 
+
+pdbbind_processor = PDBBindMetadataProcessor()
+pdbbind_mols = pdbbind_processor.get_molecules()
+pdbbind_CEL = ConfEnsembleLibrary.from_mol_list(pdbbind_mols)
+pdbbind_CEL_path = os.path.join(data_dir_path, 
                                 'raw', 
                                 'pdbbind_cel.p')
-with open(pdbbind_cel_path, 'wb') as f :
-    pickle.dump(pdbbind_CEL, f)
+# pdbbind_CEL.save(pdbbind_CEL_path)
     
-# Extract Platinum conformations
-platinum_dataset_path = os.path.join(data_dir_path, 
-                                     'platinum-dataset-2017-01-sdf', 
-                                     'platinum_dataset_2017_01.sdf')
-sdsupplier = Chem.rdmolfiles.SDMolSupplier(platinum_dataset_path)
-platinum_mols = [mol for mol in sdsupplier]
-print(f'There are {len(platinum_mols)} molecules in platinum')
-
-def extract_platinum_pdb_ids(platinum_dataset_path) :
-
-    with open(platinum_dataset_path, 'r') as f :
-        lines = f.readlines()
-        lines = [line.strip() for line in lines]
-
-    pdb_ids = []
-    new_mol = True
-    for line in lines :
-        if new_mol :
-            pdb_ids.append(line)
-            new_mol = False
-        if line == '$$$$' :
-            new_mol = True
-                
-    return pdb_ids
+platinum_processor = PlatinumProcessor()
+platinum_mols = []
+for pdb_id, platinum_d in platinum_processor.available_structures.items() :
+    for platinum_id, molecule in platinum_d.items() :
+        platinum_mols.append(molecule)
     
-# Add PDB_ID information to conformer
-pdb_ids = extract_platinum_pdb_ids(platinum_dataset_path)
-        
-for i, mol in enumerate(platinum_mols) :
-    mol.GetConformer().SetProp('PDB_ID', pdb_ids[i])
-    
-platinum_CEL = ConfEnsembleLibrary(platinum_mols)
+platinum_CEL = ConfEnsembleLibrary.from_mol_list(platinum_mols)
 platinum_CEL_path = os.path.join(data_dir_path, 
                                  'raw', 
                                  'platinum_cel.p')
-with open(platinum_CEL_path, 'wb') as f :
-    pickle.dump(platinum_CEL, f)
+# platinum_CEL.save(platinum_CEL_path)
     
 # Join PDBBind and Platinum, and compare the 2 datasets
 all_CEL = pdbbind_CEL.merge(platinum_CEL)
 all_CEL_path = os.path.join(data_dir_path, 'raw', 'all_conf_ensemble_library.p')
 with open(all_CEL_path, 'wb') as f :
     pickle.dump(all_CEL, f)
+# ConfEnsembleLibrary.to_path(all_CEL, all_CEL_path)
+all_CEL.save()
 print(f"""Total of {all_CEL.get_num_molecules()} different molecules 
       in PDBBind and Platinum""")
 
@@ -167,10 +73,30 @@ platinum_smiles = [smiles for smiles, ce in platinum_CEL.get_unique_molecules()]
 print(f'There are {len(pdbbind_smiles)} different smiles in PDBBind')
 print(f'There are {len(platinum_smiles)} different smiles in Platinum')
 
-smiles_df = pd.DataFrame(all_smiles, columns=['smiles'])
-smiles_df['pdbbind'] = smiles_df['smiles'].isin(pdbbind_smiles)
-smiles_df['platinum'] = smiles_df['smiles'].isin(platinum_smiles)
+lines = []
+for smiles, ce in all_CEL.get_unique_molecules() :
+    # For computational (conformation generation) and dataset matching reasons,
+    # PDBBind molecules having more than 50 heavy atoms were excluded
+    included = ce.mol.GetNumHeavyAtoms() <= 50
+    for conf in ce.mol.GetConformers() :
+        if conf.HasProp('pdbbind_id') :
+            lines.append([smiles, 'pdbbind', conf.GetProp('pdbbind_id'), included])
+        elif conf.HasProp('platinum_id') :
+            lines.append([smiles, 'platinum', conf.GetProp('platinum_id'), included])
 
+df_columns = ['smiles', 'dataset', 'id', 'included']
+smiles_df = pd.DataFrame(lines, columns=df_columns)
+
+faulty_smiles = ['O=C[Ru+9]12345(C6=C1C2C3=C64)n1c2ccc(O)cc2c2c3c(c4ccc[n+]5c4c21)C(=O)NC3=O',
+ 'Cc1cc2c3c(c4c5ccccc5n5c4c2[n+](c1)[Ru+9]51246(Cl)C5=C(C(=O)[O-])C1=C2C4=C56)C(=O)NC3=O']
+# cannot be pickled because of a number of radical electron error
+faulty_smiles_idx = smiles_df[smiles_df['smiles'].isin(faulty_smiles)].index
+smiles_df.loc[faulty_smiles_idx, 'included'] = False
+
+excluded_smiles = smiles_df[~smiles_df['included']]['smiles'].unique()
+print(f' There are {len(excluded_smiles)} excluded smiles')
+
+# Heavy atom analysis
 pdbbind_n_heavy_atoms = [ce.mol.GetNumHeavyAtoms() 
                          for smiles, ce in pdbbind_CEL.get_unique_molecules()]
 platinum_n_heavy_atoms = [ce.mol.GetNumHeavyAtoms() 
@@ -179,11 +105,4 @@ sns.kdeplot(pdbbind_n_heavy_atoms, label='PDBBind')
 sns.kdeplot(platinum_n_heavy_atoms, label='Platinum')
 plt.savefig(os.path.join(figures_dir_path, 'n_heavy_atoms_datasets'))
 
-# For computational (conformation generation) and dataset matching reasons,
-# PDBBind molecules having more than 50 heavy atoms were excluded
-included_smiles = [smiles 
-                   for smiles, ce in all_CEL.get_unique_molecules() 
-                   if ce.mol.GetNumHeavyAtoms() <= 50]
-smiles_df['included'] = smiles_df['smiles'].isin(included_smiles)
-len(included_smiles)
 smiles_df.to_csv(os.path.join(data_dir_path, 'smiles_df.csv'))

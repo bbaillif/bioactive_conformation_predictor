@@ -3,7 +3,7 @@ import os
 import time
 import pickle
 
-rigid_docking = RigidDocking()
+rigid_docking = RigidDocking(dataset='platinum')
 
 # with open('data/raw/ccdc_generated_conf_ensemble_library.p', 'rb') as f:
 #     conf_ensemble_library = pickle.load(f)

@@ -5,7 +5,8 @@ from rdkit import Chem
 from ccdc.docking import Docker
 from ccdc.io import MoleculeReader
 from ccdc_rdkit_connector import CcdcRdkitConnector
-from ccdc.io import Entry, Molecule
+from ccdc.io import Entry, Molecule, MoleculeWriter
+from ccdc.protein import Protein
 from multiprocessing import Pool
 from abc import abstractmethod
 
@@ -61,9 +62,31 @@ class GOLDDocker() :
         
         self.ccdc_rdkit_connector = CcdcRdkitConnector()
         
-        self.settings.add_protein_file(protein_path)
         if self.prepare_protein :
-            self.settings.proteins[0].add_hydrogens()
+            
+            initial_protein_filename = os.path.basename(protein_path)
+            pdb_id = initial_protein_filename.split('.pdb')[0]
+            new_protein_filename = f'{pdb_id}_prepared.pdb'
+            protein_dir = os.path.dirname(protein_path)
+            prepared_protein_path = os.path.join(protein_dir, 
+                                                 new_protein_filename)
+            
+            if not os.path.exists(prepared_protein_path) :
+                protein = Protein.from_file(protein_path)
+                protein.add_hydrogens()
+                for ligand in protein.ligands :
+                    protein.remove_ligand(ligand.identifier)
+                protein.remove_all_metals()
+                protein.remove_all_waters()
+                
+                with MoleculeWriter(prepared_protein_path) as protein_writer :
+                    protein_writer.write(protein)
+                    
+            self.settings.add_protein_file(prepared_protein_path)
+            
+        else :
+            self.settings.add_protein_file(protein_path)
+                
         self.settings.reference_ligand_file = native_ligand_path
         
         docker_output_dir = os.path.join(self.output_dir, 

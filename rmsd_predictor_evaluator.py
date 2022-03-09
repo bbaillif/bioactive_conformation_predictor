@@ -51,6 +51,8 @@ class RMSDPredictorEvaluator() :
         self.active_ratio = 0.1
         self.show_individual_scatterplot = show_individual_scatterplot
         
+        self.ef_fractions = [0.1, 0.2]
+        
         self.rng = default_rng()
     
     def evaluate(self, 
@@ -297,11 +299,13 @@ class RMSDPredictorEvaluator() :
             self.rng.shuffle(random_preds_array)
             self.conf_results[smiles]['ranked_lists']['random'] = random_preds_array
 
-            self.mol_results[smiles]['ef'] = {}
+            for fraction in self.ef_fractions :
+                self.mol_results[smiles][f'ef_{fraction}'] = {}
             self.mol_results[smiles]['bedroc'] = {}
             rankers = self.conf_results[smiles]['ranked_lists'].keys()
             for ranker in rankers :
-                self.mol_results[smiles]['ef'][ranker] = CalcEnrichment(self.conf_results[smiles]['ranked_lists'][ranker], col=1, fractions=[0.2])[0]
+                for fraction in self.ef_fractions :
+                    self.mol_results[smiles][f'ef_{fraction}'][ranker] = CalcEnrichment(self.conf_results[smiles]['ranked_lists'][ranker], col=1, fractions=[fraction])[0]
                 self.mol_results[smiles]['bedroc'][ranker] = CalcBEDROC(self.conf_results[smiles]['ranked_lists'][ranker], col=1, alpha=20)
         
         
@@ -386,14 +390,16 @@ class RMSDPredictorEvaluator() :
         self.dataset_results['ranking'] = {}
         for ranker in ['random', 'energy', 'ccdc', 'model'] :
             bedrocs = []
-            efs = []
+            efs = defaultdict(list)
             for smiles, results_d in self.mol_results.items() :
                 if smiles in self.included_smiles :
-                    if 'ef' in results_d :
+                    if 'bedroc' in results_d :
                         bedrocs.append(results_d['bedroc'][ranker])
-                        efs.append(results_d['ef'][ranker])
+                        for fraction in self.ef_fractions :
+                            efs[fraction].append(results_d[f'ef_{fraction}'][ranker])
             self.dataset_results['ranking'][ranker] = {}
             self.dataset_results['ranking'][ranker]['bedroc'] = np.mean(bedrocs)
-            self.dataset_results['ranking'][ranker]['ef'] = np.mean(efs)
+            for fraction in self.ef_fractions :
+                self.dataset_results['ranking'][ranker][f'ef_{fraction}'] = np.mean(efs[fraction])
          
     
