@@ -11,6 +11,7 @@ from tqdm import tqdm
 from typing import List
 from molecule_encoders import MoleculeEncoders
 from molecule_featurizer import MoleculeFeaturizer
+from conf_ensemble_library import ConfEnsembleLibrary
 
 Chem.SetDefaultPickleProperties(Chem.PropertyPickleOptions.AllProps)
 random.seed(42)
@@ -26,6 +27,8 @@ class ConfEnsembleDataset(InMemoryDataset) :
                  verbose: int=0,
                  filter_out_bioactive: bool=False):
         
+        assert dataset in ['pdbbind', 'platinum']
+        
         self.root = root
         self.dataset = dataset
         self.loaded_chunk = loaded_chunk
@@ -35,35 +38,20 @@ class ConfEnsembleDataset(InMemoryDataset) :
         self.filter_out_bioactive = filter_out_bioactive
         
         self.smiles_df = pd.read_csv(os.path.join(self.root, 'smiles_df.csv'))
-        self.conf_df = pd.read_csv(os.path.join(self.root, 'conf_df.csv'))
-        is_platinum = self.smiles_df['platinum']
+        #self.conf_df = pd.read_csv(os.path.join(self.root, 'conf_df.csv'))
+        
+        in_platinum = self.smiles_df['dataset'] == 'platinum'
+        in_pdbbind = self.smiles_df['dataset'] == 'pdbbind'
         is_included = self.smiles_df['included']
-        if dataset == 'pdbbind' :
-            self.included_smiles = self.smiles_df[is_included & ~is_platinum]['smiles'].values
+        if self.dataset == 'pdbbind' :
+            self.included_smiles = self.smiles_df[is_included & in_pdbbind & ~in_platinum]['smiles'].unique()
         else :
-            self.included_smiles = self.smiles_df[is_included & is_platinum]['smiles'].values
+            self.included_smiles = self.smiles_df[is_included & in_platinum]['smiles'].unique()
+        
         self.n_mols = len(self.included_smiles)
         self.n_chunks = int(self.n_mols / chunk_size) + 1
-        self.encoder_path = os.path.join(self.root, 'molecule_encoders.p')
         
-        with open(self.raw_paths[0], 'rb') as f :
-            conf_ensemble_library = pickle.load(f)
-        
-        # Encoders
-        if os.path.exists(self.encoder_path) : # Load existing encoder
-            if self.verbose :
-                print('Loading existing encoders')
-            with open(self.encoder_path, 'rb') as f:
-                self.molecule_encoders = pickle.load(f)
-        else : # Create encoders
-            if self.verbose :
-                print('Creating molecule encoders')
-            self.molecule_encoders = MoleculeEncoders()
-            self.molecule_encoders.create_encoders(conf_ensemble_library)
-            with open(self.encoder_path, 'wb') as f:
-                pickle.dump(self.molecule_encoders, f)
-                
-        self.molecule_featurizer = MoleculeFeaturizer(self.molecule_encoders)
+        self.molecule_featurizer = MoleculeFeaturizer()
         
         super().__init__(root=root) # calls the process functions
         
@@ -81,11 +69,11 @@ class ConfEnsembleDataset(InMemoryDataset) :
                     else :
                         all_data_list.append(data)
             self.data, self.slices = self.collate(all_data_list)
-            
-    
+           
+           
     @property
     def raw_file_names(self) -> List[str]:
-        return ['ccdc_generated_conf_ensemble_library.p']
+        return ['all_conf_ensemble_library.p']
     
     @property
     def processed_file_names(self) -> List[str]:
@@ -94,18 +82,23 @@ class ConfEnsembleDataset(InMemoryDataset) :
         else :
             return [f'platinum_dataset_{i}.pt' for i in range(self.n_chunks)]
     
+    # @property
+    # def processed_file_names(self) -> List[str]:
+    #     if self.dataset == 'pdbbind' :
+    #         return [f'pdbbind_dataset_{i}.pt' for i in range(self.n_chunks)]
+    #     else :
+    #         return [f'platinum_dataset_{i}.pt' for i in range(self.n_chunks)]
+    
     def process(self):
         
-        with open(self.raw_paths[0], 'rb') as f :
-            conf_ensemble_library = pickle.load(f)
+        cel = ConfEnsembleLibrary()
+        cel.load('merged')
         
         # Generate data
         all_data_list = []
         chunk_number = 0
         for idx, smiles in enumerate(tqdm(self.included_smiles)) :
-            conf_idxs = self.conf_df[self.conf_df['smiles'] == smiles].index
-            
-            conf_ensemble = conf_ensemble_library.get_conf_ensemble(smiles)
+            conf_ensemble = cel.get_conf_ensemble(smiles)
             mol = conf_ensemble.mol
             try :
                 data_list = self.molecule_featurizer.featurize_mol(mol)

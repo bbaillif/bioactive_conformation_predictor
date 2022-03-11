@@ -7,8 +7,6 @@ from ccdc.io import MoleculeReader
 from ccdc_rdkit_connector import CcdcRdkitConnector
 from ccdc.io import Entry, Molecule, MoleculeWriter
 from ccdc.protein import Protein
-from multiprocessing import Pool
-from abc import abstractmethod
 
 class FailedGOLDDockingException(Exception) :
     """Raised if GOLD does not return 0

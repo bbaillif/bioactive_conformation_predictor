@@ -6,10 +6,9 @@ from rdkit import Chem
 from rdkit.Chem.rdchem import (
     Atom, 
     Bond, 
-    RingInfo, 
-    Mol)
+    RingInfo)
 
-from conf_ensemble import ConfEnsembleLibrary
+from conf_ensemble_library import ConfEnsembleLibrary
 from sklearn.preprocessing import OneHotEncoder
 from tqdm import tqdm
 

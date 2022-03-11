@@ -3,18 +3,13 @@ import torch
 import copy
 
 from rdkit import Chem
-from rdkit.Chem.rdchem import (
-    Atom, 
-    Bond, 
-    RingInfo, 
-    Mol)
 from rdkit.Chem.rdDistGeom import EmbedMultipleConfs
 from rdkit.Chem.rdMolAlign import GetBestRMS
 from rdkit.Chem import AllChem #needed for rdForceFieldHelpers
-from rdkit.Chem.rdForceFieldHelpers import MMFFGetMoleculeProperties, MMFFGetMoleculeForceField, MMFFSanitizeMolecule
+from rdkit.Chem.rdForceFieldHelpers import MMFFSanitizeMolecule
 from ccdc_rdkit_connector import CcdcRdkitConnector
 from molecule_encoders import MoleculeEncoders
-from conf_ensemble import ConfEnsembleLibrary
+from conf_ensemble_library import ConfEnsembleLibrary
 from torch_geometric.data import Data
 from ccdc.descriptors import MolecularDescriptors
     

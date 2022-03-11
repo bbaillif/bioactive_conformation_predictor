@@ -1,6 +1,7 @@
 from xdrlib import ConversionError
 import numpy as np
 import torch
+import copy
 
 from abc import abstractmethod
 from torch_geometric.data import Batch
@@ -15,15 +16,22 @@ class Pose() :
     to only a molecule and a score
     
     :param pose: entry corresponding to docking pose
-    :type pose: ccdc.io.Entry
+    :type pose: ccdc.io.Entry or rdkit.Chem.rdchem.Mol
     """
     
     def __init__(self,
-                 pose) -> None:
-        self.molecule = pose.molecule
-        self.score = float(pose.attributes['Gold.PLP.Fitness'])
-        self.identifier = pose.identifier
-        
+                 pose,
+                 backend='rdkit') -> None:
+        self.backend = backend
+        if backend == 'ccdc' :
+            self.molecule = pose.molecule
+            self.score = float(pose.attributes['Gold.PLP.Fitness'])
+            self.identifier = pose.identifier
+        elif backend == 'rdkit' :
+            self.molecule = pose
+            self.score = float(pose.GetProp('Gold.PLP.Fitness').strip())
+            self.identifier = pose.GetProp('_Name')
+            
     def fitness(self):
         return self.score
 
@@ -97,8 +105,8 @@ class PoseSelector():
                                                  ascending=ascending)
             
         if self.number is not None:
-            assert self.number < len(values), \
-            'Requested number must be lower than number of values'
+            assert self.number <= len(values), \
+            f'Requested number {self.number} must be lower or equal than number of values {len(values)}'
             limit = self.number
         else :
             limit = int(len(values) * self.ratio)
@@ -143,8 +151,25 @@ class ScorePoseSelector(PoseSelector):
                                           ascending=False)
             
         return poses_subset
-        
-class EnergyPoseSelector(PoseSelector):
+      
+      
+class RDKitMolRanker() :
+    
+    def poses_to_rdkit_mol(self, 
+                           poses) :
+        first_pose = poses[0]
+        if first_pose.backend == 'ccdc' :
+            rdkit_mol, new_conf_ids = self.ccdc_rdkit_connector.ccdc_ensemble_to_rdkit_mol(
+                ccdc_ensemble=poses
+                )
+        elif first_pose.backend == 'rdkit' :
+            rdkit_mol = copy.deepcopy(first_pose.molecule)
+            for pose in poses[1:] :
+                rdkit_mol.AddConformer(pose.molecule.GetConformer(), 
+                                        assignId=True)
+        return rdkit_mol
+     
+class EnergyPoseSelector(PoseSelector, RDKitMolRanker):
     """Rank poses according to their energy (computed in mol featurizer)
     
     :param mol_featurizer: object used to featurize molecule for neural networks
@@ -165,9 +190,7 @@ class EnergyPoseSelector(PoseSelector):
                      poses,):
         poses_subset = None
         try :
-            rdkit_mol, new_conf_ids = self.ccdc_rdkit_connector.ccdc_ensemble_to_rdkit_mol(
-                ccdc_ensemble=poses
-                )
+            rdkit_mol = self.poses_to_rdkit_mol(poses)
             try :
                 data_list = self.mol_featurizer.featurize_mol(rdkit_mol)
                 energies = [data.energy for data in data_list]
@@ -182,7 +205,7 @@ class EnergyPoseSelector(PoseSelector):
             
         return poses_subset
         
-class ModelPoseSelector(PoseSelector):
+class ModelPoseSelector(PoseSelector, RDKitMolRanker):
     """Rank values according to their predicted RMSD values (model predictions)
     
     :param model: RMSD prediction model (trained)
@@ -207,9 +230,7 @@ class ModelPoseSelector(PoseSelector):
                      poses,):
         poses_subset = None
         try :
-            rdkit_mol, new_conf_ids = self.ccdc_rdkit_connector.ccdc_ensemble_to_rdkit_mol(
-                ccdc_ensemble=poses
-                )
+            rdkit_mol = self.poses_to_rdkit_mol(poses)
             try :
                 data_list = self.mol_featurizer.featurize_mol(rdkit_mol)
                 batch = Batch.from_data_list(data_list)
