@@ -100,6 +100,10 @@ p.close()
 print('succeeded {}/{}\n'.format(len(seqs), len(codes)))
 codes = [j for i, j in enumerate(codes) if i not in Nones]
 
+code_file = 'codes.json'
+with open(code_file, 'w') as f:
+    json.dump(codes, f, indent=4)
+
 seqs_2d = [[i] for i in range(len(seqs))]
 
 psa = PairwiseSequenceSimilarity(seqs=seqs)
@@ -118,6 +122,12 @@ print("Found {} clusters with max 20% different.\n".format(max(T)+1))
 cluster_file = 'protein_clusters.json'
 with open(cluster_file, 'w') as f:
     json.dump(T.tolist(), f, indent=4)
+print('Flat cluster result save at {}\n'.format(cluster_file))
+
+pdb_to_cluster = {codes[i] : int(cluster_id) for i, cluster_id in enumerate(T)}
+cluster_file = 'pdb_clusters.json'
+with open(cluster_file, 'w') as f:
+    json.dump(pdb_to_cluster, f, indent=4)
 print('Flat cluster result save at {}\n'.format(cluster_file))
 
 print('Elapsed time {}.'.format(dt.now() - start))

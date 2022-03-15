@@ -38,11 +38,13 @@ class DUDEDocking() :
     def __init__(self,
                  target: str='jak2',
                  dude_dir: str='/home/benoit/DUD-E/all',
-                 rigid_docking: bool=False):
+                 rigid_docking: bool=False,
+                 use_selector_scoring: bool=False):
         
         self.target = target
         self.dude_dir = dude_dir
         self.rigid_docking = rigid_docking
+        self.use_selector_scoring = use_selector_scoring
         
         self.target_dir = os.path.join(self.dude_dir, self.target)
         self.actives_file = 'actives_final.mol2.gz'
@@ -59,7 +61,7 @@ class DUDEDocking() :
             self.experiment_id = self.experiment_id + '_rigid'
             
         self.ccdc_rdkit_connector = CcdcRdkitConnector()
-        
+        print(f'Docking {self.target}')
         
     def dock(self) :
         """Performs docking for actives and decoy for setup target
@@ -111,8 +113,8 @@ class DUDEDocking() :
                       for ccdc_mol in all_mols]
         
         print(f'Number of threads : {len(mol_ids)}')
-        params = [(mol_id, rdkit_mol) 
-                  for mol_id, rdkit_mol 
+        params = [(mol_id, rdkit_mol)
+                  for mol_id, rdkit_mol
                   in zip(mol_ids, rdkit_mols)]
         with Pool(processes=12, maxtasksperchild=1) as pool :
             pool.map(self.dock_thread, params)
@@ -241,16 +243,23 @@ class DUDEDocking() :
             results[selector_name] = {}
             active_selected_poses = self.active_selected_poses[selector_name]
             decoy_selected_poses = self.decoy_selected_poses[selector_name]
-                    
-            active_2d_list = [[pose.fitness(), True] 
+            
+            if self.use_selector_scoring :
+                score_name = selector_name
+            else :
+                score_name = 'score'
+            active_2d_list = [[pose.fitness(score_name=score_name), True] 
                               for pose in active_selected_poses]
-            decoy_2d_list = [[pose.fitness(), False] 
+            decoy_2d_list = [[pose.fitness(score_name=score_name), False] 
                              for pose in decoy_selected_poses]
             
             all_2d_list = active_2d_list + decoy_2d_list
             all_2d_array = np.array(all_2d_list)
             
-            sorting = np.argsort(-all_2d_array[:, 0])
+            if selector_name == 'score' :
+                sorting = np.argsort(-all_2d_array[:, 0]) # the minus is important here
+            else :
+                sorting = np.argsort(all_2d_array[:, 0])
             sorted_2d_array = all_2d_array[sorting]
 
             results[selector_name]['ef'] = {}
@@ -275,8 +284,12 @@ class DUDEDocking() :
             results[selector_name]['all_2d_list'] = all_2d_list
             results[selector_name]['bedroc'] = bedroc
             
+        if self.use_selector_scoring :
+            results_file_name = 'results_custom_score.json'
+        else :
+            results_file_name = 'results_docking_score.json'
         results_path = os.path.join(self.gold_docker.settings.output_directory,
-                                    'results.json')
+                                    results_file_name)
         print(results_path)
         with open(results_path, 'w') as f :
             json.dump(results, f)
@@ -332,6 +345,12 @@ if __name__ == '__main__':
                         type=str, 
                         default='jak2',
                         help='Target to dock')
+    parser.add_argument('--rigid', 
+                        action='store_true',
+                        help='Generate conformations for rigid docking, else flexible')
+    parser.add_argument('--use_selector_scoring', 
+                        action='store_true',
+                        help='Whether to replace the score (fitness) of the pose with the selector scoring')
     # parser.add_argument('--split_name', 
     #                     type=str, 
     #                     default='random',
@@ -342,11 +361,17 @@ if __name__ == '__main__':
     #                     help='Split number to use for model and test set')
     args = parser.parse_args()
     
-    # dude_docking = DUDEDocking(target=args.target)
-    dude_docking = DUDEDocking(target=args.target,
-                               rigid_docking=True)
-    #dude_docking.dock_pool()
-    dude_docking.ef_analysis()
+    if args.target == 'all' :
+        targets = os.listdir('/home/benoit/DUD-E/all')
+    else :
+        targets = [args.target]
+        
+    for target in targets :
+        dude_docking = DUDEDocking(target=target,
+                                   rigid_docking=args.rigid,
+                                   use_selector_scoring=args.use_selector_scoring)
+        dude_docking.dock_pool()
+        dude_docking.ef_analysis()
     
 # TODO : iterate over targets
 # TODO : store results in jsons for each target

@@ -23,17 +23,28 @@ class Pose() :
                  pose,
                  backend='rdkit') -> None:
         self.backend = backend
+        self.default_score_name = 'score'
+        self.scores = {}
         if backend == 'ccdc' :
             self.molecule = pose.molecule
-            self.score = float(pose.attributes['Gold.PLP.Fitness'])
+            self.scores[self.default_score_name] = float(pose.attributes['Gold.PLP.Fitness'])
             self.identifier = pose.identifier
         elif backend == 'rdkit' :
             self.molecule = pose
-            self.score = float(pose.GetProp('Gold.PLP.Fitness').strip())
+            self.scores[self.default_score_name] = float(pose.GetProp('Gold.PLP.Fitness').strip())
             self.identifier = pose.GetProp('_Name')
             
-    def fitness(self):
-        return self.score
+            
+    def fitness(self,
+                score_name='score'):
+        return self.scores[score_name]
+            
+    
+    def set_score(self,
+                  score,
+                  score_name: str='score') :
+        self.scores[score_name] = float(score)
+        
 
 class PoseSelector():
     """Base class for pose selectors, that can sort poses depending on values,
@@ -111,8 +122,14 @@ class PoseSelector():
         else :
             limit = int(len(values) * self.ratio)
         selected_indexes = sorted_indexes[:limit]
-        poses_subset = [poses[i]
-                        for i in selected_indexes]
+        poses_subset = []
+        for i in selected_indexes :
+            selected_pose = poses[i]
+            if self.selector_name != 'score' :
+                score = values[i]
+                selected_pose.set_score(score, 
+                                        score_name=self.selector_name)
+            poses_subset.append(selected_pose)
         
         return poses_subset
         
@@ -130,7 +147,8 @@ class RandomPoseSelector(PoseSelector) :
                      poses):
         n_poses = len(poses)
         random_values = np.random.randn((n_poses))
-        poses_subset = self.filter_subset(poses, values=random_values)
+        poses_subset = self.filter_subset(poses, 
+                                          values=random_values)
             
         return poses_subset
   
@@ -144,7 +162,7 @@ class ScorePoseSelector(PoseSelector):
         super().__init__(selector_name, ratio, number)
     
     def select_poses(self,
-                     poses,):
+                     poses):
         scores = [pose.fitness() for pose in poses]
         poses_subset = self.filter_subset(poses, 
                                           values=scores, 
@@ -187,14 +205,15 @@ class EnergyPoseSelector(PoseSelector, RDKitMolRanker):
         self.ccdc_rdkit_connector = CcdcRdkitConnector()
     
     def select_poses(self,
-                     poses,):
+                     poses):
         poses_subset = None
         try :
             rdkit_mol = self.poses_to_rdkit_mol(poses)
             try :
                 data_list = self.mol_featurizer.featurize_mol(rdkit_mol)
                 energies = [data.energy for data in data_list]
-                poses_subset = self.filter_subset(poses, values=energies)
+                poses_subset = self.filter_subset(poses, 
+                                                  values=energies)
             except AttributeError :
                 print('Energy computation bugging')
         except ConversionError :
@@ -227,7 +246,7 @@ class ModelPoseSelector(PoseSelector, RDKitMolRanker):
         self.ccdc_rdkit_connector = CcdcRdkitConnector()
     
     def select_poses(self,
-                     poses,):
+                     poses):
         poses_subset = None
         try :
             rdkit_mol = self.poses_to_rdkit_mol(poses)
@@ -240,7 +259,8 @@ class ModelPoseSelector(PoseSelector, RDKitMolRanker):
                     preds = self.model(batch).cpu().numpy()
                     preds = preds.reshape(-1)
                 
-                poses_subset = self.filter_subset(poses, values=preds)
+                poses_subset = self.filter_subset(poses, 
+                                                  values=preds)
                 
             except AttributeError :
                 print('Energy computation bugging')

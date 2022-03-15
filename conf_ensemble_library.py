@@ -210,7 +210,6 @@ class ConfEnsembleLibrary(object) :
             writer.write(rdkit_mol, conf_id)
 
 
-                
     def get_num_molecules(self) :
         return len(self.library)
     
