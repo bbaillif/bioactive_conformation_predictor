@@ -7,11 +7,13 @@ from rdkit.Chem.rdDistGeom import EmbedMultipleConfs
 from rdkit.Chem.rdMolAlign import GetBestRMS
 from rdkit.Chem import AllChem #needed for rdForceFieldHelpers
 from rdkit.Chem.rdForceFieldHelpers import MMFFSanitizeMolecule
+from rdkit.Chem.rdMolDescriptors import CalcNumRotatableBonds
 from ccdc_rdkit_connector import CcdcRdkitConnector
 from molecule_encoders import MoleculeEncoders
 from conf_ensemble_library import ConfEnsembleLibrary
 from torch_geometric.data import Data
 from ccdc.descriptors import MolecularDescriptors
+
     
 class MoleculeFeaturizer() :
     
@@ -29,7 +31,16 @@ class MoleculeFeaturizer() :
             self.encoded_ring_function_names = molecule_encoders.encoded_ring_function_names
         self.ccdc_rdkit_connector = CcdcRdkitConnector()
         
-    def featurize_mol(self, rdkit_mol, conf_generator='ccdc', rmsd_func='ccdc', interpolate=False, exclude_hydrogens=True) :
+    def featurize_mol(self, 
+                      rdkit_mol, 
+                      mol_ids=None,
+                      conf_generator='ccdc', 
+                      rmsd_func='ccdc', 
+                      interpolate=False, 
+                      exclude_hydrogens=True) :
+        
+        if mol_ids :
+            assert len(mol_ids) == rdkit_mol.GetNumConformers()
         
         data_list = []
         
@@ -51,7 +62,16 @@ class MoleculeFeaturizer() :
         
         # Make one data per conformer, because it has different positions
         for conf_id, conf in enumerate(rdkit_mol.GetConformers()) :
-            data = self.conf_to_data(rdkit_mol=rdkit_mol, conf_id=conf_id, edge_index=edge_index, x=x, edge_attr=edge_attr)
+            if mol_ids :
+                mol_id = mol_ids[conf_id]
+            else :
+                mol_id = Chem.MolToSmiles(rdkit_mol)
+            data = self.conf_to_data(rdkit_mol=rdkit_mol, 
+                                     conf_id=conf_id, 
+                                     edge_index=edge_index, 
+                                     x=x, 
+                                     edge_attr=edge_attr,
+                                     mol_id=mol_id)
             data_list.append(data)
             
         return data_list
@@ -115,7 +135,15 @@ class MoleculeFeaturizer() :
             mol_bond_features.append(bond_features)
         return mol_bond_features, row, col
     
-    def conf_to_data(self, rdkit_mol, conf_id, edge_index, z=None, x=None, edge_attr=None, save_mol=False) :
+    def conf_to_data(self, 
+                     rdkit_mol, 
+                     conf_id, 
+                     edge_index, 
+                     z=None, 
+                     x=None, 
+                     edge_attr=None, 
+                     save_mol=False,
+                     mol_id=None) :
         
         conf = rdkit_mol.GetConformer(conf_id)
         pos = torch.tensor(conf.GetPositions(), dtype=torch.float32)
@@ -139,22 +167,38 @@ class MoleculeFeaturizer() :
         # y = torch.tensor(energy, requires_grad=False)
         dummy_mol = Chem.RemoveHs(dummy_mol)
         
+        n_heavy_atoms = dummy_mol.GetNumHeavyAtoms()
+        n_rotatable_bonds = CalcNumRotatableBonds(dummy_mol)
+        
         if save_mol :
             data_id = dummy_mol
         else :
-            data_id = Chem.MolToSmiles(dummy_mol)
+            if mol_id :
+                data_id = mol_id
+            else :
+                data_id = Chem.MolToSmiles(dummy_mol)
             
         if self.encode_graph :
             assert edge_attr is not None
             assert x is not None
-            data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr, pos=pos, data_id=data_id, energy=energy)
+            data = Data(x=x, 
+                        edge_index=edge_index, 
+                        edge_attr=edge_attr, 
+                        pos=pos)
         else :
             if x is not None :
                 z = x[:, 0]
             else :
                 assert z is not None
-            data = Data(z=z, edge_index=edge_index, pos=pos, data_id=data_id, energy=energy)
+            data = Data(z=z, 
+                        edge_index=edge_index, 
+                        pos=pos)
             
+        data.data_id = data_id
+        data.energy = energy
+        data.n_heavy_atoms = n_heavy_atoms
+        data.n_rotatable_bonds = n_rotatable_bonds
+        
         return data
     
     def get_bioactive_rmsds(self, rdkit_mol, rmsd_func='ccdc') :

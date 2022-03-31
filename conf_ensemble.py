@@ -86,6 +86,9 @@ class ConfEnsemble(object) :
         for i, mol in enumerate(standardized_mol_list) :
             if i == 0 :
                 master_mol = copy.deepcopy(mol)
+                conf = master_mol.GetConformer()
+                for prop, value in mol.GetPropsAsDict().items():
+                    conf.SetProp(prop, str(value))
             else :
                 for conf in mol.GetConformers() : 
                     for prop, value in mol.GetPropsAsDict().items():

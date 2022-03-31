@@ -1,4 +1,4 @@
-import pickle
+import copy
 import torch
 import os
 import random
@@ -23,6 +23,7 @@ class ConfEnsembleDataset(InMemoryDataset) :
                  dataset: str='pdbbind',
                  loaded_chunk: int=0,
                  smiles_list: List=[],
+                 pdb_ids_list: List=[],
                  chunk_size: int=4000,
                  verbose: int=0,
                  filter_out_bioactive: bool=False):
@@ -38,17 +39,24 @@ class ConfEnsembleDataset(InMemoryDataset) :
         self.filter_out_bioactive = filter_out_bioactive
         
         self.smiles_df = pd.read_csv(os.path.join(self.root, 'smiles_df.csv'))
-        #self.conf_df = pd.read_csv(os.path.join(self.root, 'conf_df.csv'))
         
         in_platinum = self.smiles_df['dataset'] == 'platinum'
         in_pdbbind = self.smiles_df['dataset'] == 'pdbbind'
         is_included = self.smiles_df['included']
+        platinum_smiles = self.smiles_df[in_platinum]['smiles'].unique()
+        platinum_pdb_ids = self.smiles_df[in_platinum]['pdb_id'].unique()
+        smiles_in_platinum = self.smiles_df['smiles'].isin(platinum_smiles)
+        pdb_id_in_platinum = self.smiles_df['pdb_id'].isin(platinum_pdb_ids)
         if self.dataset == 'pdbbind' :
-            self.included_smiles = self.smiles_df[is_included & in_pdbbind & ~in_platinum]['smiles'].unique()
+            self.processed_data = self.smiles_df[is_included 
+                                                  & in_pdbbind 
+                                                  & ~smiles_in_platinum
+                                                  & ~pdb_id_in_platinum]  
         else :
-            self.included_smiles = self.smiles_df[is_included & in_platinum]['smiles'].unique()
+            self.processed_data = self.smiles_df[is_included & in_platinum]
+        self.processed_smiles = self.processed_data['smiles'].unique()
         
-        self.n_mols = len(self.included_smiles)
+        self.n_mols = len(self.processed_smiles)
         self.n_chunks = int(self.n_mols / chunk_size) + 1
         
         self.molecule_featurizer = MoleculeFeaturizer()
@@ -57,18 +65,22 @@ class ConfEnsembleDataset(InMemoryDataset) :
         
         self.load_chunk(loaded_chunk)
         
-        # smiles filtering, useful for train/test split
-        if len(smiles_list) :
-            all_data_list = []
-            for data in self :
-                data_smiles = data.data_id
-                if data_smiles in smiles_list :
-                    if self.filter_out_bioactive :
-                        if data.rmsd != 0 :
-                            all_data_list.append(data)
-                    else :
-                        all_data_list.append(data)
-            self.data, self.slices = self.collate(all_data_list)
+        if self.dataset == 'pdbbind' :
+            smiles_list = [smiles 
+                           for smiles in smiles_list 
+                           if smiles not in platinum_smiles]
+            pdb_ids_list = [pdb_id 
+                            for pdb_id in pdb_ids_list 
+                            if pdb_id not in platinum_pdb_ids]
+            
+        # If we have pdb ids input only, we add smiles_list to have the Gen conformations data
+        if len(pdb_ids_list) and not len(smiles_list) :
+            id_in_list = self.smiles_df['id'].isin(pdb_ids_list)
+            smiles_list = self.smiles_df[id_in_list]['smiles'].unique()
+        
+        # smiles or pdb_id filtering, useful for train/test split
+        if len(smiles_list) or len(pdb_ids_list):
+            self.filter_data(smiles_list, pdb_ids_list)
            
            
     @property
@@ -78,47 +90,122 @@ class ConfEnsembleDataset(InMemoryDataset) :
     @property
     def processed_file_names(self) -> List[str]:
         if self.dataset == 'pdbbind' :
-            return [f'pdbbind_dataset_{i}.pt' for i in range(self.n_chunks)]
+            #return [f'pdbbind_dataset_{i}.pt' for i in range(self.n_chunks)]
+            return [f'pdbbind_dataset_{i}.pt' for i in range(4)]
         else :
             return [f'platinum_dataset_{i}.pt' for i in range(self.n_chunks)]
     
-    # @property
-    # def processed_file_names(self) -> List[str]:
-    #     if self.dataset == 'pdbbind' :
-    #         return [f'pdbbind_dataset_{i}.pt' for i in range(self.n_chunks)]
-    #     else :
-    #         return [f'platinum_dataset_{i}.pt' for i in range(self.n_chunks)]
     
     def process(self):
         
         cel = ConfEnsembleLibrary()
-        cel.load('merged')
+        cel.load_metadata()
+        #cel.load('merged')
         
         # Generate data
         all_data_list = []
         chunk_number = 0
-        for idx, smiles in enumerate(tqdm(self.included_smiles)) :
-            conf_ensemble = cel.get_conf_ensemble(smiles)
+        for idx, smiles in enumerate(tqdm(self.processed_smiles)) :
+            conf_ensemble = cel.load_ensemble_from_smiles(smiles,
+                                                          load_dir='merged')
             mol = conf_ensemble.mol
-            try :
-                data_list = self.molecule_featurizer.featurize_mol(mol)
-                rmsds = self.molecule_featurizer.get_bioactive_rmsds(mol)
-                for i, data in enumerate(data_list) :
-                    data.rmsd = rmsds[i]
-                    all_data_list.append(data)
+            if self.dataset == 'pdbbind' :
+                try :
+                    mol_ids = []
+                    gen_i = 0
+                    for conf in mol.GetConformers() :
+                        pdb_id = conf.GetProp('PDB_ID')
+                        if conf.HasProp('Generator') :
+                            mol_id = f'{smiles}_Gen_{gen_i}'
+                            gen_i = gen_i + 1
+                        else :
+                            mol_id = f'{smiles}_{pdb_id}'
+                        mol_ids.append(mol_id)
+                    data_list = self.molecule_featurizer.featurize_mol(mol, 
+                                                                    mol_ids=mol_ids)
+                    rmsds = self.molecule_featurizer.get_bioactive_rmsds(mol)
+                    for i, data in enumerate(data_list) :
+                        data.rmsd = rmsds[i]
+                        all_data_list.append(data)
 
-                if (idx + 1) % self.chunk_size == 0 :
-                    torch.save(self.collate(all_data_list), self.processed_paths[chunk_number])
-                    if self.verbose :
-                        print(f'Chunk num {chunk_number} saved')
-                    all_data_list = []
-                    chunk_number = chunk_number + 1
-            except :
-                print(f'Error with smiles {smiles}')
+                    if (idx + 1) % self.chunk_size == 0 :
+                        torch.save(self.collate(all_data_list), self.processed_paths[chunk_number])
+                        if self.verbose :
+                            print(f'Chunk num {chunk_number} saved')
+                        all_data_list = []
+                        chunk_number = chunk_number + 1
+                except Exception as e :
+                    print(f'Error with smiles {smiles}')
+                    print(str(e))
+            elif self.dataset == 'platinum' : 
+                try :
+                    new_mol = copy.deepcopy(mol)
+                    new_mol.RemoveAllConformers()
+                    mol_ids = []
+                    gen_i = 0
+                    for conf in mol.GetConformers() :
+                        pdb_id = conf.GetProp('PDB_ID')
+                        if conf.HasProp('Generator') :
+                            new_mol.AddConformer(conf, assignId=True)
+                            mol_id = f'{smiles}_Gen_{gen_i}'
+                            mol_ids.append(mol_id)
+                            gen_i = gen_i + 1
+                        elif conf.HasProp('platinum_id') :
+                            new_mol.AddConformer(conf, assignId=True)
+                            mol_id = f'{smiles}_{pdb_id}'
+                            mol_ids.append(mol_id)
+                    data_list = self.molecule_featurizer.featurize_mol(new_mol, 
+                                                                    mol_ids=mol_ids)
+                    rmsds = self.molecule_featurizer.get_bioactive_rmsds(mol)
+                    for i, data in enumerate(data_list) :
+                        data.rmsd = rmsds[i]
+                        all_data_list.append(data)
+
+                    if (idx + 1) % self.chunk_size == 0 :
+                        torch.save(self.collate(all_data_list), self.processed_paths[chunk_number])
+                        if self.verbose :
+                            print(f'Chunk num {chunk_number} saved')
+                        all_data_list = []
+                        chunk_number = chunk_number + 1
+                except Exception as e :
+                    print(f'Error with smiles {smiles}')
+                    print(str(e))
+                
         torch.save(self.collate(all_data_list), self.processed_paths[chunk_number])
+        
         if self.verbose :
             print(f'Chunk num {chunk_number} saved')
+            
         all_data_list = []
+            
+            
+    def filter_data(self, 
+                    smiles_list,
+                    pdb_ids_list) :
+        # if pdb_ids_list, smiles_list is corresponding to the one seen for pdbs
+        all_data_list = []
+        for data in self :
+            data_id_split = data.data_id.split('_')
+            data_smiles = data_id_split[0]
+            data_pdb_id = data_id_split[1].replace('e+', 'e').replace('30.0', '3e01')
+            is_bioactive = data_pdb_id != 'Gen'
+            is_generated = not is_bioactive
+            smiles_in_list = data_smiles in smiles_list
+            
+            is_included = True
+            if len(pdb_ids_list) :
+                if not data_pdb_id in pdb_ids_list :
+                    if not (smiles_in_list and is_generated) :
+                        is_included = False
+            elif len(smiles_list) :
+                if not smiles_in_list :
+                    is_included = False
+
+            if is_included :
+                all_data_list.append(data)
+                
+        self.data, self.slices = self.collate(all_data_list)
+            
             
     def _angle_interpolation(self, start, end, amounts=[0.5]) :
         interps = []
@@ -128,10 +215,12 @@ class ConfEnsembleDataset(InMemoryDataset) :
             interps.append((((start + to_add) + 180) % 360) - 180)
         return interps
     
+    
     def load_chunk(self, chunk_number) :
         self.data, self.slices = torch.load(self.processed_paths[chunk_number])
         if self.verbose :
             print(f'Chunk num {chunk_number} loaded')
+        
         
     def get(self, idx: int) -> Data:
         
@@ -144,6 +233,7 @@ class ConfEnsembleDataset(InMemoryDataset) :
         )
 
         return data
+    
     
 if __name__ == '__main__':
     conf_ensemble_dataset = ConfEnsembleDataset()

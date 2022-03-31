@@ -50,11 +50,11 @@ class GOLDDocker() :
         # Setup some default settings for our experiments
         self.settings = self.docker.settings
         self.settings.fitness_function = 'plp'
-        self.settings.autoscale = 10.
+        # self.settings.autoscale = 50.
         self.settings.early_termination = False
         self.settings.diverse_solutions = True
         
-        self.settings.write_options= ['NO_FIT_PTS_FILES']
+        self.settings.write_options = ['NO_FIT_PTS_FILES']
 
         self.ligand_preparation = Docker.LigandPreparation()
         

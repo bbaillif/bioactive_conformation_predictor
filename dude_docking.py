@@ -194,29 +194,32 @@ class DUDEDocking() :
                                       experiment_id=self.experiment_id)
         self.mol_featurizer = MoleculeFeaturizer()
         
-        self.model_checkpoint_dir = os.path.join('lightning_logs',
-                                                  'random_split_0_new',
-                                                  'checkpoints')
-        self.model_checkpoint_name = os.listdir(self.model_checkpoint_dir)[0]
-        self.model_checkpoint_path = os.path.join(self.model_checkpoint_dir,
-                                                  self.model_checkpoint_name)
-        self.model = LitSchNet.load_from_checkpoint(self.model_checkpoint_path)
-        self.model.eval()
+        self.pose_selectors = {}
         
-        if use_cuda and torch.cuda.is_available() :
-            self.model = self.model.to('cuda')
-        else :
-            self.model = self.model.to('cpu')
+        for split in ['random', 'scaffold', 'protein'] :
         
-        self.pose_selectors = {
-            'random' : RandomPoseSelector(number=1),
-            'score' : ScorePoseSelector(number=1),
-            'energy' : EnergyPoseSelector(mol_featurizer=self.mol_featurizer,
-                                         number=1),
-            'model' : ModelPoseSelector(model=self.model,
-                                        mol_featurizer=self.mol_featurizer,
-                                        number=1)
-        }
+            model_checkpoint_dir = os.path.join('lightning_logs',
+                                                    'random_split_0_new',
+                                                    'checkpoints')
+            model_checkpoint_name = os.listdir(model_checkpoint_dir)[0]
+            model_checkpoint_path = os.path.join(model_checkpoint_dir,
+                                                 model_checkpoint_name)
+            model = LitSchNet.load_from_checkpoint(model_checkpoint_path)
+            model.eval()
+            
+            if use_cuda and torch.cuda.is_available() :
+                model = model.to('cuda')
+            else :
+                model = model.to('cpu')
+        
+            self.pose_selectors[f'model_{split}'] = ModelPoseSelector(model=model,
+                                                                    mol_featurizer=self.mol_featurizer,
+                                                                    number=1)
+        
+        self.pose_selectors['random'] = RandomPoseSelector(number=1)
+        self.pose_selectors['score'] = ScorePoseSelector(number=1)
+        self.pose_selectors['energy'] = EnergyPoseSelector(mol_featurizer=self.mol_featurizer,
+                                                            number=1)
         
         dude_docking_dir = os.path.join(self.gold_docker.output_dir,
                                         self.gold_docker.experiment_id)
@@ -370,7 +373,7 @@ if __name__ == '__main__':
         dude_docking = DUDEDocking(target=target,
                                    rigid_docking=args.rigid,
                                    use_selector_scoring=args.use_selector_scoring)
-        dude_docking.dock_pool()
+        # dude_docking.dock_pool()
         dude_docking.ef_analysis()
     
 # TODO : iterate over targets

@@ -49,7 +49,7 @@ class ConfEnsembleLibrary(object) :
         cel = cls()
         print('Generating library')
         for mol in tqdm(mol_list) :
-            Chem.AssignAtomChiralTagsFromStructure(mol)
+            Chem.AssignAtomChiralTagsFromStructure(mol) # could be changed to AssignStereochemistryFrom3D
             smiles = Chem.MolToSmiles(mol)
             try :
                 if smiles in cel.library :
@@ -132,16 +132,18 @@ class ConfEnsembleLibrary(object) :
                                  smiles,
                                  load_dir=None) :
         if load_dir is None :
-            load_dir = self.conf_ensemble_df_path
+            load_dir = self.conf_ensemble_dir
+        elif load_dir == 'generated' :
+            load_dir = self.gen_conf_ensemble_dir
         elif load_dir == 'merged' :
             load_dir = self.merged_conf_ensemble_dir
             
         smiles_table = self.table[self.table['smiles'] == smiles]
         if len(smiles_table) :
-            file_name = smiles_table['file_name']
+            file_name = smiles_table['file_name'].values[0]
             file_path = os.path.join(load_dir,
                                      file_name)
-            return self.load_ensemble_for_smiles(file_path=file_path)
+            return self.load_ensemble_from_file(file_path=file_path)
         else :
             raise Exception('Smiles not in conf ensemble')
                
@@ -172,12 +174,12 @@ class ConfEnsembleLibrary(object) :
         for smiles, ce in tqdm(self.library.items()):
             mol = ce.mol
             file_name = f'{i}.sdf'
-            writer_path = os.path.join(save_dir,
-                                       file_name)
             if unique_file :
                 self.save_confs_to_writer(rdkit_mol=mol,
                                           writer=writer)
             else :
+                writer_path = os.path.join(save_dir,
+                                       file_name)
                 self.save_ensemble(rdkit_mol=mol,
                                 file_path=writer_path)
             row = pd.DataFrame([[smiles, file_name]], 
@@ -208,6 +210,8 @@ class ConfEnsembleLibrary(object) :
             for prop, value in conf.GetPropsAsDict().items():
                 rdkit_mol.SetProp(prop, str(value))
             writer.write(rdkit_mol, conf_id)
+            for prop in rdkit_mol.GetPropsAsDict() :
+                rdkit_mol.ClearProp(prop)
 
 
     def get_num_molecules(self) :
@@ -265,10 +269,13 @@ class ConfEnsembleLibrary(object) :
         try :
             gen_file_path = os.path.join(self.gen_conf_ensemble_dir,
                                          file_name)
+            merged_file_path = os.path.join(self.merged_conf_ensemble_dir,
+                                            file_name)
             if not os.path.exists(gen_file_path) :
                 print('Generating for ' + original_file_path)
                 conf_ensemble = self.load_ensemble_from_file(original_file_path)
                 rdkit_mol = conf_ensemble.mol
+                #import pdb;pdb.set_trace()
                 ccdc_mol = self.ccdc_rdkit_connector.rdkit_conf_to_ccdc_mol(rdkit_mol)
                 assert rdkit_mol.GetNumAtoms() == len(ccdc_mol.atoms)
                 
@@ -278,7 +285,16 @@ class ConfEnsembleLibrary(object) :
                                                                                                         generated=True,
                                                                                                         remove_input_conformers=True)
                 self.save_ensemble(rdkit_mol=gen_rdkit_mol,
-                                file_path=gen_file_path)
+                                   file_path=gen_file_path)
+                
+                merged_rdkit_mol = gen_rdkit_mol
+                for conf in rdkit_mol.GetConformers() :
+                    merged_rdkit_mol.AddConformer(conf, 
+                                                  assignId=True)
+                self.save_ensemble(rdkit_mol=merged_rdkit_mol,
+                                   file_path=merged_file_path)
+                
+                
         except Exception as e :
             print('Generation failed for ' + original_file_path)
             print(str(e))

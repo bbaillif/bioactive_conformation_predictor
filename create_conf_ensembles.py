@@ -9,7 +9,7 @@ import seaborn as sns
 
 from rdkit import Chem
 from rdkit import RDLogger
-from conf_ensemble import ConfEnsembleLibrary
+from conf_ensemble_library import ConfEnsembleLibrary
 from pdbbind_metadata_processor import PDBBindMetadataProcessor
 from platinum_processor import PlatinumProcessor
                                                                                                                                                            
@@ -105,4 +105,10 @@ sns.kdeplot(pdbbind_n_heavy_atoms, label='PDBBind')
 sns.kdeplot(platinum_n_heavy_atoms, label='Platinum')
 plt.savefig(os.path.join(figures_dir_path, 'n_heavy_atoms_datasets'))
 
+def extract_pdb_id(s) :
+    if len(s) == 4 :
+        return s
+    else :
+        return s.split('_')[1].lower()
+smiles_df['pdb_id'] = smiles_df['id'].apply(extract_pdb_id)
 smiles_df.to_csv(os.path.join(data_dir_path, 'smiles_df.csv'))

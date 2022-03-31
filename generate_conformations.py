@@ -5,7 +5,7 @@ import os
 import pandas as pd
 import argparse
 
-from conf_ensemble import ConfEnsembleLibrary
+from conf_ensemble_library import ConfEnsembleLibrary
 
 parser = argparse.ArgumentParser(description='Select data directory')
 parser.add_argument('--data_dir', 
