@@ -54,7 +54,10 @@ class GOLDDocker() :
         self.settings.early_termination = False
         self.settings.diverse_solutions = True
         
-        self.settings.write_options = ['NO_FIT_PTS_FILES']
+        self.settings.write_options = ['NO_FIT_PTS_FILES', 
+                                       'NO_LOG_FILES',
+                                       'NO_RNK_FILES']#,
+                                       #'NO_GOLD_SOLN_LIGAND_MOL2_FILES']
 
         self.ligand_preparation = Docker.LigandPreparation()
         
@@ -185,6 +188,10 @@ class GOLDDocker() :
         if results.return_code :
             raise FailedGOLDDockingException()
         runtime = time.time() - start_time
+        
+        for filename in os.listdir(mol_output_dir) :
+            if 'ligand_' in filename :
+                os.remove(os.path.join(mol_output_dir, filename))
         
         if return_runtime :
             return results, runtime

@@ -144,15 +144,17 @@ class DUDEDocking() :
             
             if self.rigid_docking :
                 ccdc_mols = self.generate_conformers_for_molecule(ccdc_mol)
+                n_poses = 1
             else :
                 ccdc_mols = [ccdc_mol]
+                n_poses = 20
             
             self.gold_docker = GOLDDocker(protein_path=self.protein_path,
                                         native_ligand_path=self.ligand_path,
                                         experiment_id=self.experiment_id) 
             results = self.gold_docker.dock_molecules(ccdc_mols=ccdc_mols,
                                                     mol_id=mol_id,
-                                                    n_poses=1,
+                                                    n_poses=n_poses,
                                                     rigid=self.rigid_docking)
         except :
             print(f'Docking failed for {mol_id}')
@@ -196,10 +198,13 @@ class DUDEDocking() :
         
         self.pose_selectors = {}
         
+        self.active_max_scores = [] # [{percentage_conf : max_score}]
+        self.decoy_max_scores = []
+        
         for split in ['random', 'scaffold', 'protein'] :
         
             model_checkpoint_dir = os.path.join('lightning_logs',
-                                                    'random_split_0_new',
+                                                    f'{split}_split_0',
                                                     'checkpoints')
             model_checkpoint_name = os.listdir(model_checkpoint_dir)[0]
             model_checkpoint_path = os.path.join(model_checkpoint_dir,
@@ -214,12 +219,12 @@ class DUDEDocking() :
         
             self.pose_selectors[f'model_{split}'] = ModelPoseSelector(model=model,
                                                                     mol_featurizer=self.mol_featurizer,
-                                                                    number=1)
+                                                                    ratio=1)
         
-        self.pose_selectors['random'] = RandomPoseSelector(number=1)
-        self.pose_selectors['score'] = ScorePoseSelector(number=1)
+        self.pose_selectors['random'] = RandomPoseSelector(ratio=1)
+        self.pose_selectors['score'] = ScorePoseSelector(ratio=1)
         self.pose_selectors['energy'] = EnergyPoseSelector(mol_featurizer=self.mol_featurizer,
-                                                            number=1)
+                                                            ratio=1)
         
         dude_docking_dir = os.path.join(self.gold_docker.output_dir,
                                         self.gold_docker.experiment_id)
@@ -231,72 +236,110 @@ class DUDEDocking() :
                       for d in docked_dirs 
                       if 'decoy' in d]
         
-        self.active_selected_poses = defaultdict(list)
         for active_dir in tqdm(active_dirs) :
-            self.load_and_select_poses(directory=active_dir,
-                                       subset='active')
+            max_scores = self.evaluate_molecule(directory=active_dir)
+            if max_scores is not None :
+                self.active_max_scores.append(max_scores)
                 
-        self.decoy_selected_poses = defaultdict(list)
         for decoy_dir in tqdm(decoy_dirs) :
-            self.load_and_select_poses(directory=decoy_dir,
-                                       subset='decoy')
+            max_scores = self.evaluate_molecule(directory=decoy_dir)
+            if max_scores is not None :
+                self.decoy_max_scores.append(max_scores)
                
-        results = {}
-        for selector_name, pose_selector in self.pose_selectors.items() :
-            results[selector_name] = {}
-            active_selected_poses = self.active_selected_poses[selector_name]
-            decoy_selected_poses = self.decoy_selected_poses[selector_name]
+        results = {} # selector_name, percentage, efs, fractions
+        for selector_name in self.pose_selectors.keys() :
+            selector_name_results = {}
             
-            if self.use_selector_scoring :
-                score_name = selector_name
-            else :
-                score_name = 'score'
-            active_2d_list = [[pose.fitness(score_name=score_name), True] 
-                              for pose in active_selected_poses]
-            decoy_2d_list = [[pose.fitness(score_name=score_name), False] 
-                             for pose in decoy_selected_poses]
+            active_max_scores = [max_scores[selector_name] 
+                                 for max_scores in self.active_max_scores]
+            decoy_max_scores = [max_scores[selector_name] 
+                                 for max_scores in self.decoy_max_scores]
+            for percentage in range(1, 101) :
+                percentage_results = {}
+                active_2d_list = [[max_scores[percentage], True] 
+                                  for max_scores in active_max_scores]
+                decoy_2d_list = [[max_scores[percentage], False] 
+                                  for max_scores in decoy_max_scores]
             
-            all_2d_list = active_2d_list + decoy_2d_list
-            all_2d_array = np.array(all_2d_list)
-            
-            if selector_name == 'score' :
-                sorting = np.argsort(-all_2d_array[:, 0]) # the minus is important here
-            else :
-                sorting = np.argsort(all_2d_array[:, 0])
-            sorted_2d_array = all_2d_array[sorting]
+                all_2d_list = active_2d_list + decoy_2d_list
+                all_2d_array = np.array(all_2d_list)
+                
+                if selector_name == 'score' or not self.use_selector_scoring:
+                    sorting = np.argsort(-all_2d_array[:, 0]) # the minus is important here
+                elif self.use_selector_scoring :
+                    sorting = np.argsort(all_2d_array[:, 0])
+                sorted_2d_array = all_2d_array[sorting]
 
-            results[selector_name]['ef'] = {}
-            fractions = np.arange(start=0.01, 
-                                  stop=1.01, 
-                                  step=0.01)
-            fractions = np.around(fractions, decimals=2)
-            efs = CalcEnrichment(sorted_2d_array, 
-                                col=1,
-                                fractions=fractions)
-            efs = np.around(efs, decimals=3)
-            for fraction, ef in zip(fractions, efs) :
-                print(f'{selector_name} has EF{fraction} of {ef}')
-                results[selector_name]['ef'][fraction] = ef
-            
-            bedroc = CalcBEDROC(sorted_2d_array, 
-                                col=1, 
-                                alpha=20)
-            bedroc = np.around(bedroc, decimals=3)
-            print(f'{selector_name} has BEDROC of {bedroc}')
-            
-            results[selector_name]['all_2d_list'] = all_2d_list
-            results[selector_name]['bedroc'] = bedroc
+                fractions = np.arange(start=0.01, 
+                                    stop=1.01, 
+                                    step=0.01)
+                fractions = np.around(fractions, decimals=2)
+                efs = CalcEnrichment(sorted_2d_array, 
+                                    col=1,
+                                    fractions=fractions)
+                efs = np.around(efs, decimals=3)
+                ef_results = {}
+                for fraction, ef in zip(fractions, efs) :
+                    # print(f'{selector_name} has EF{fraction} of {ef}')
+                    ef_results[fraction] = ef
+                percentage_results['ef'] = ef_results
+                
+                bedroc = CalcBEDROC(sorted_2d_array, 
+                                    col=1, 
+                                    alpha=20)
+                bedroc = np.around(bedroc, decimals=3)
+                # print(f'{selector_name} has BEDROC of {bedroc}')
+                
+                percentage_results['all_2d_list'] = all_2d_list
+                percentage_results['bedroc'] = bedroc
+                
+                selector_name_results[percentage] = percentage_results
+                
+            results[selector_name] = selector_name_results
             
         if self.use_selector_scoring :
             results_file_name = 'results_custom_score.json'
         else :
-            results_file_name = 'results_docking_score.json'
+            results_file_name = 'results_docking_score_percentage.json'
         results_path = os.path.join(self.gold_docker.settings.output_directory,
                                     results_file_name)
         print(results_path)
         with open(results_path, 'w') as f :
             json.dump(results, f)
         
+        
+    def evaluate_molecule(self,
+                          directory,
+                          subset: str='active') :
+        max_scores = {}
+        assert subset in ['active', 'decoy']
+        poses = self.get_poses(directory=directory)
+        if poses :
+            included = True
+            for selector_name, pose_selector in self.pose_selectors.items() :
+                ranked_poses = pose_selector.select_poses(poses)
+                if ranked_poses and included :
+                    max_scores[selector_name] = {}
+                    n_poses = len(ranked_poses)
+                    for percentage in range(1, 101) :
+                        try :
+                            n_conf = percentage * n_poses // 100
+                            n_conf = max(1, n_conf) # avoid n_conf = 0 situation
+                            pose_subset = ranked_poses[:n_conf]
+                            subset_scores = [pose.fitness() 
+                                            for pose in pose_subset]
+                            max_score = np.max(subset_scores)
+                            max_scores[selector_name][percentage] = max_score
+                        except :
+                            import pdb;pdb.set_trace()
+                else :
+                    max_scores = None
+                    included = False
+                    break
+        else :
+            max_scores = None
+        return max_scores
+    
 
     def get_poses(self, 
                   directory) :
@@ -354,14 +397,6 @@ if __name__ == '__main__':
     parser.add_argument('--use_selector_scoring', 
                         action='store_true',
                         help='Whether to replace the score (fitness) of the pose with the selector scoring')
-    # parser.add_argument('--split_name', 
-    #                     type=str, 
-    #                     default='random',
-    #                     help='Split to use for the model and pdbbind test dataset')
-    # parser.add_argument('--split_i', 
-    #                     type=int, 
-    #                     default=0,
-    #                     help='Split number to use for model and test set')
     args = parser.parse_args()
     
     if args.target == 'all' :
@@ -369,12 +404,16 @@ if __name__ == '__main__':
     else :
         targets = [args.target]
         
+    targets = ['drd3']
     for target in targets :
         dude_docking = DUDEDocking(target=target,
-                                   rigid_docking=args.rigid,
-                                   use_selector_scoring=args.use_selector_scoring)
+                                   rigid_docking=True)
         # dude_docking.dock_pool()
         dude_docking.ef_analysis()
+        # dude_docking = DUDEDocking(target=target,
+        #                            rigid_docking=False)
+        # dude_docking.dock_pool()
+        # dude_docking.ef_analysis()
     
 # TODO : iterate over targets
 # TODO : store results in jsons for each target

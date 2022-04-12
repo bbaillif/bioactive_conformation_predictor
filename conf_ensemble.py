@@ -53,7 +53,8 @@ class ConfEnsemble(object) :
                 if self.standardize_mol :
                     mol = self.standardize_mol(mol=mol)
                 for conf in mol.GetConformers() : 
-                    for prop, value in mol.GetPropsAsDict().items():
+                    for prop in mol.GetPropNames() :
+                        value = mol.GetProp(prop)
                         conf.SetProp(prop, str(value))
                 self.mol = mol
             else :
@@ -87,11 +88,13 @@ class ConfEnsemble(object) :
             if i == 0 :
                 master_mol = copy.deepcopy(mol)
                 conf = master_mol.GetConformer()
-                for prop, value in mol.GetPropsAsDict().items():
+                for prop in mol.GetPropNames() :
+                    value = mol.GetProp(prop)
                     conf.SetProp(prop, str(value))
             else :
                 for conf in mol.GetConformers() : 
-                    for prop, value in mol.GetPropsAsDict().items():
+                    for prop in mol.GetPropNames() :
+                        value = mol.GetProp(prop)
                         conf.SetProp(prop, str(value))
                     new_conf_id = master_mol.AddConformer(conf, assignId=True)
             
@@ -118,7 +121,8 @@ class ConfEnsemble(object) :
         Chem.AssignAtomChiralTagsFromStructure(mol)
         standard_mol = Chem.MolFromSmiles(Chem.MolToSmiles(mol))
         assert mol.GetNumAtoms() == standard_mol.GetNumAtoms()
-        for prop, value in mol.GetPropsAsDict().items() :
+        for prop in mol.GetPropNames() :
+            value = mol.GetProp(prop)
             standard_mol.SetProp(prop, str(value))
             for conf in standard_mol.GetConformers() :
                 conf.SetProp(prop, str(value))
@@ -141,7 +145,8 @@ class ConfEnsemble(object) :
                 conf.SetAtomPosition(i, position)
             #print(conf.GetPositions())
             
-            for prop, value in mol.GetPropsAsDict().items() :
+            for prop in mol.GetPropNames() :
+                value = mol.GetProp(prop)
                 conf.SetProp(prop, str(value))
             
             new_conf_id = standard_mol.AddConformer(conf, assignId=True)

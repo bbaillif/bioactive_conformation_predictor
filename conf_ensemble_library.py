@@ -207,10 +207,11 @@ class ConfEnsembleLibrary(object) :
                              writer) :
         for conf in rdkit_mol.GetConformers() :
             conf_id = conf.GetId()
-            for prop, value in conf.GetPropsAsDict().items():
+            for prop in conf.GetPropNames() :
+                value = conf.GetProp(prop)
                 rdkit_mol.SetProp(prop, str(value))
             writer.write(rdkit_mol, conf_id)
-            for prop in rdkit_mol.GetPropsAsDict() :
+            for prop in conf.GetPropNames() :
                 rdkit_mol.ClearProp(prop)
 
 
@@ -264,6 +265,8 @@ class ConfEnsembleLibrary(object) :
     def generate_conf_thread(self, params) :
         
         smiles, file_name = params
+        if file_name == '267.sdf' :
+            import pdb;pdb.set_trace()
         original_file_path = os.path.join(self.conf_ensemble_dir,
                                           file_name)
         try :

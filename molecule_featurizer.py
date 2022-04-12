@@ -17,26 +17,12 @@ from ccdc.descriptors import MolecularDescriptors
     
 class MoleculeFeaturizer() :
     
-    def __init__(self, 
-                 encode_graph=False, 
-                 molecule_encoders=None) :
-        self.encode_graph = encode_graph
-        self.molecule_encoders = molecule_encoders
-        if self.encode_graph :
-            assert self.molecule_encoders is not None, \
-                'Encoders must be defined if encode_graph is True'
-            self.molecule_encoders = molecule_encoders
-            self.encoded_atom_function_names = molecule_encoders.encoded_atom_function_names
-            self.encoded_bond_function_names = molecule_encoders.encoded_bond_function_names
-            self.encoded_ring_function_names = molecule_encoders.encoded_ring_function_names
+    def __init__(self) :
         self.ccdc_rdkit_connector = CcdcRdkitConnector()
         
     def featurize_mol(self, 
                       rdkit_mol, 
                       mol_ids=None,
-                      conf_generator='ccdc', 
-                      rmsd_func='ccdc', 
-                      interpolate=False, 
                       exclude_hydrogens=True) :
         
         if mol_ids :
@@ -79,32 +65,9 @@ class MoleculeFeaturizer() :
     def encode_atom_features(self, rdkit_mol) :
         
         mol_atom_features = []
-        ring = rdkit_mol.GetRingInfo()
         for atom_idx, atom in enumerate(rdkit_mol.GetAtoms()):
             atom_features = []
-
             atom_features.append(atom.GetAtomicNum()) # Atomic number is both encoded as one hot and integer
-            
-            if self.molecule_encoders :
-                # Add one hot encoding of atomic features
-                for function_name in self.encoded_atom_function_names :
-                    function = eval(function_name)
-                    one_hot_encoder = self.molecule_encoders[function_name]
-                    value = function(atom)
-                    atom_features.extend(one_hot_encoder.transform([[value]])[0])
-            
-            atom_features.append(1 if atom.GetIsAromatic() else 0)
-
-            atom_features.extend([atom.IsInRingSize(size) for size in range(3, 9)])
-
-            if self.molecule_encoders :
-                # Add one hot encoding of ring features in atomic features
-                for function_name in self.encoded_ring_function_names :
-                    function = eval(function_name)
-                    one_hot_encoder = self.molecule_encoders[function_name]
-                    value = function(ring, atom_idx)
-                    atom_features.extend(one_hot_encoder.transform([[value]])[0])
-
             mol_atom_features.append(atom_features)
 
         x = torch.tensor(mol_atom_features, dtype=torch.float32)
@@ -120,18 +83,6 @@ class MoleculeFeaturizer() :
             row.append(start)
             col.append(end)
 
-            if self.molecule_encoders :
-                # Add one hot encoding of bond features
-                for function_name in self.encoded_bond_function_names :
-                    function = eval(function_name)
-                    one_hot_encoder = self.molecule_encoders[function_name]
-                    value = function(bond)
-                    bond_features.extend(one_hot_encoder.transform([[value]])[0])
-
-            bond_features.append(int(bond.IsInRing()))
-            bond_features.append(int(bond.GetIsConjugated()))
-            bond_features.append(int(bond.GetIsAromatic()))
-
             mol_bond_features.append(bond_features)
         return mol_bond_features, row, col
     
@@ -139,7 +90,6 @@ class MoleculeFeaturizer() :
                      rdkit_mol, 
                      conf_id, 
                      edge_index, 
-                     z=None, 
                      x=None, 
                      edge_attr=None, 
                      save_mol=False,
@@ -178,33 +128,19 @@ class MoleculeFeaturizer() :
             else :
                 data_id = Chem.MolToSmiles(dummy_mol)
             
-        if self.encode_graph :
-            assert edge_attr is not None
-            assert x is not None
-            data = Data(x=x, 
-                        edge_index=edge_index, 
-                        edge_attr=edge_attr, 
-                        pos=pos)
-        else :
-            if x is not None :
-                z = x[:, 0]
-            else :
-                assert z is not None
-            data = Data(z=z, 
-                        edge_index=edge_index, 
-                        pos=pos)
-            
-        data.data_id = data_id
-        data.energy = energy
-        data.n_heavy_atoms = n_heavy_atoms
-        data.n_rotatable_bonds = n_rotatable_bonds
+        data = Data(x=x, 
+                    edge_index=edge_index, 
+                    pos=pos,
+                    data_id=data_id,
+                    energy=energy,
+                    n_heavy_atoms=n_heavy_atoms,
+                    n_rotatable_bonds=n_rotatable_bonds)
         
         return data
     
     def get_bioactive_rmsds(self, rdkit_mol, rmsd_func='ccdc') :
         
         bioactive_conf_ids = [conf.GetId() for conf in rdkit_mol.GetConformers() if not conf.HasProp('Generator')]
-        generated_conf_ids = [conf.GetId() for conf in rdkit_mol.GetConformers() if conf.HasProp('Generator')]
         
         rmsds = []
         for conf in rdkit_mol.GetConformers() :

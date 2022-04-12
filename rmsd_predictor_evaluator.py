@@ -28,7 +28,7 @@ class RMSDPredictorEvaluator() :
                  model: LitSchNet, 
                  evaluation_name: str,
                  results_dir: str='results/', 
-                 active_ratio: float=0.1,
+                 bioactive_threshold: float=1.0,
                  show_individual_scatterplot: bool=False,
                  training_smiles: list=None,
                  training_pdb_ids: list=None) :
@@ -36,7 +36,7 @@ class RMSDPredictorEvaluator() :
         self.model = model
         self.evaluation_name = evaluation_name
         self.results_dir = results_dir
-        self.active_ratio = active_ratio
+        self.bioactive_threshold = bioactive_threshold
         self.show_individual_scatterplot = show_individual_scatterplot
         self.training_smiles = training_smiles
         self.training_pdb_ids = training_pdb_ids # useless currently, can be used for protein similarity to training set
@@ -59,8 +59,8 @@ class RMSDPredictorEvaluator() :
         self.mol_results_path = os.path.join(self.working_dir, 'mol_results.p')
             
         # To store results
-        self.conf_results = defaultdict(dict)
-        self.mol_results = defaultdict(dict)
+        self.conf_results = {}
+        self.mol_results = {}
         self.dataset_results = {}
         
         # For the random shuffle
@@ -106,9 +106,9 @@ class RMSDPredictorEvaluator() :
         self.included_smiles = []
             
         # Define if the molecule will be included in dataset evaluation based on task
-        for smiles, results_d in self.mol_results.items() :
-            n_generated = results_d['n_generated']
-            has_generated = n_generated > 0
+        for smiles, mol_results in self.mol_results.items() :
+            n_generated = mol_results['n_generated']
+            has_generated = n_generated > 1
             is_easy = n_generated < 100
             is_hard = n_generated == 100
             task_filter = (self.task == 'all') or (self.task == 'hard' and is_hard) or (self.task == 'easy' and is_easy)
@@ -158,12 +158,12 @@ class RMSDPredictorEvaluator() :
     def plot_distribution_bioactive_ranks(self, bioactive_ranks, suffix=None) :
         plt.figure(figsize=(7, 5))
         plt.hist(bioactive_ranks, bins=100)
-        if suffix == 'normalized' :
+        if 'normalized' in suffix :
             plt.xlabel('Normalized rank')
         else :
             plt.xlabel('Rank')
         plt.ylabel('Count')
-        if suffix == 'normalized' :
+        if 'normalized' in suffix :
             plt.title('Distribution of predicted bioactive conformations normalized ranks')
         else :
             plt.title('Distribution of predicted bioactive conformations ranks')
@@ -189,10 +189,16 @@ class RMSDPredictorEvaluator() :
         
         
     def mol_evaluation(self, smiles, smiles_data_list) :
+        
+        mol_results = {}
+        conf_results = {}
+        
         mol = Chem.MolFromSmiles(smiles)
-        self.mol_results[smiles]['n_rotatable_bonds'] = CalcNumRotatableBonds(mol)
-        self.mol_results[smiles]['n_heavy_atoms'] = mol.GetNumHeavyAtoms()
-        self.mol_results[smiles]['max_sim_to_training'] = self.get_max_sim_to_train_dataset(mol)
+        
+        # Mol descriptors
+        mol_results['n_rotatable_bonds'] = CalcNumRotatableBonds(mol)
+        mol_results['n_heavy_atoms'] = mol.GetNumHeavyAtoms()
+        mol_results['max_sim_to_training'] = self.get_max_sim_to_train_dataset(mol)
 
         # Make model predictions
         smiles_loader = DataLoader(smiles_data_list, batch_size=16)
@@ -203,131 +209,146 @@ class RMSDPredictorEvaluator() :
             for batch in smiles_loader :
                 mol_energies.extend(batch.energy.numpy())
                 mol_targets.extend(batch.rmsd.numpy())
+                
                 batch.to(self.model.device)
-
                 pred = self.model(batch)
                 mol_preds.extend(pred.detach().cpu().numpy().squeeze(1))
 
             losses = F.mse_loss(torch.tensor(mol_targets), torch.tensor(mol_preds), reduction='none')
+            rmses = torch.sqrt(losses)
 
-        self.conf_results[smiles]['preds'] = mol_preds
-        self.conf_results[smiles]['targets'] = mol_targets
-        self.conf_results[smiles]['rmse'] = losses.tolist()
-        self.conf_results[smiles]['energies'] = mol_energies
+        conf_results['preds'] = mol_preds
+        conf_results['targets'] = mol_targets
+        conf_results['losses'] = losses.tolist()
+        conf_results['rmse'] = rmses.tolist()
+        conf_results['energies'] = mol_energies
             
         mol_targets = np.array(mol_targets)
         mol_preds = np.array(mol_preds)
         mol_energies = np.array(mol_energies)
             
+        n_conformations = len(mol_targets)
+            
         # Bioactive stats
         is_bioactive = mol_targets == 0
         n_bioactive = is_bioactive.sum()
-        self.mol_results[smiles]['n_bioactive'] = n_bioactive
-        n_generated = (~is_bioactive).sum()
-        self.mol_results[smiles]['n_generated'] = n_generated
+        mol_results['n_bioactive'] = int(n_bioactive)
+        
+        is_generated = (~is_bioactive)
+        n_generated = is_generated.sum()
+        mol_results['n_generated'] = int(n_generated)
         
         # Molecule level evaluation
-        if n_generated > 0 :
+        if n_generated > 1 :
 
-            if self.show_individual_scatterplot :
-                plt.scatter(mol_targets, mol_preds)
-                #plt.title(f'Loss : {loss:.2f}')
-                plt.xlabel('RMSD')
-                plt.ylabel('Predicted RMSD')
-                plt.save()
-
-            self.mol_results[smiles]['r2_all'] = r2_score(mol_targets, mol_preds)
-            self.mol_results[smiles]['rmse_all'] = mean_squared_error(mol_targets, mol_preds, squared=False)
-
-            pred_ranks = mol_preds.argsort().argsort()
-            bioactive_pred_ranks = pred_ranks[is_bioactive]
-            self.conf_results[smiles]['bioactive_ranks'] = bioactive_pred_ranks.tolist()
-            self.mol_results[smiles]['min_bioactive_ranks'] = bioactive_pred_ranks.min()
-            self.mol_results[smiles]['top1_bioactive'] = 0 in bioactive_pred_ranks
-            topn_accuracy = len(set(range(n_bioactive)).intersection(set(bioactive_pred_ranks))) / n_bioactive
-            self.mol_results[smiles]['topN_bioactive'] = topn_accuracy
-
-            bioactive_preds = mol_preds[is_bioactive]
-            self.conf_results[smiles]['bioactive_preds'] = bioactive_preds
-            self.mol_results[smiles]['rmse_bio'] = mean_squared_error(np.zeros_like(bioactive_preds), bioactive_preds, squared=False) 
+            mol_results['r2_all'] = r2_score(mol_targets, mol_preds)
+            mol_results['rmse_all'] = mean_squared_error(mol_targets, mol_preds, squared=False)
 
             if type(self.model) != MolSizeModel :
-                self.mol_results[smiles]['pearson_all'] = pearsonr(mol_targets, mol_preds)[0]
-                self.mol_results[smiles]['spearman_all'] = spearmanr(mol_targets, mol_preds)[0]
+                mol_results['pearson_all'] = pearsonr(mol_targets, mol_preds)[0]
+                mol_results['spearman_all'] = spearmanr(mol_targets, mol_preds)[0]
+
+            # Bioactive stats
+            bioactive_preds = mol_preds[is_bioactive]
+            conf_results['bioactive_preds'] = bioactive_preds
+            try :
+                mol_results['rmse_bio'] = mean_squared_error(np.zeros_like(bioactive_preds), bioactive_preds, squared=False) 
+            except :
+                import pdb;pdb.set_trace()
 
             # Generated stats
-            generated_targets = mol_targets[~is_bioactive]
-            generated_preds = mol_preds[~is_bioactive]
-            generated_energies = mol_energies[~is_bioactive]
+            generated_targets = mol_targets[is_generated]
+            generated_preds = mol_preds[is_generated]
+            generated_energies = mol_energies[is_generated]
 
-            self.conf_results[smiles]['generated_targets'] = generated_targets
-            self.conf_results[smiles]['generated_preds'] = generated_preds
-            self.conf_results[smiles]['generated_energies'] = generated_energies
+            conf_results['generated_targets'] = generated_targets
+            conf_results['generated_preds'] = generated_preds
+            conf_results['generated_energies'] = generated_energies
 
-            if n_generated > 1 :
-                self.mol_results[smiles]['r2_gen'] = r2_score(generated_targets, generated_preds)
-                if type(self.model) != MolSizeModel :
-                    self.mol_results[smiles]['pearson_gen'] = pearsonr(generated_targets, generated_preds)[0]
-                    self.mol_results[smiles]['spearman_gen'] = spearmanr(generated_targets, generated_preds)[0]
-            self.mol_results[smiles]['rmse_gen'] = mean_squared_error(generated_targets, generated_preds, squared=False)
+            mol_results['r2_gen'] = r2_score(generated_targets, generated_preds)
+            mol_results['rmse_gen'] = mean_squared_error(generated_targets, generated_preds, squared=False)
+            if type(self.model) != MolSizeModel :
+                mol_results['pearson_gen'] = pearsonr(generated_targets, generated_preds)[0]
+                mol_results['spearman_gen'] = spearmanr(generated_targets, generated_preds)[0]
 
-            # Ranking
-            actives_i = np.argsort(generated_targets)[:int(len(generated_targets) * self.active_ratio)]
-            activity = [True if i in actives_i else False for i in range(len(generated_targets))]
-            self.conf_results[smiles]['generated_activity'] = activity
-            preds_array = np.array(list(zip(generated_preds, activity))) # compatible with RDKit ranking metrics
+            # Bioactive conformations ranking
+            mol_results['first_bioactive_rank'] = {}
+            mol_results['normalized_first_bioactive_rank'] = {}
+            bio_conf_rankers = {'model' : mol_preds,
+                                'energy' : mol_energies,
+                                'random' : np.random.randn(n_conformations)}
+            bio_ranking_results = {}
+            
+            for ranker, values in bio_conf_rankers.items() :
+                ranker_results = {}
+                sorting = values.argsort()
+                ranks = sorting.argsort()
+                bioactive_ranks = ranks[is_bioactive]
+                ranker_results['bioactive_ranks'] = bioactive_ranks.tolist()
+                first_bioactive_rank = bioactive_ranks.min()
+                mol_results['first_bioactive_rank'][ranker] = int(first_bioactive_rank)
+                normalized_rank = first_bioactive_rank / n_conformations
+                mol_results['normalized_first_bioactive_rank'][ranker] = float(normalized_rank)
+            
+                bio_ranking_results[ranker] = ranker_results
+            
+            conf_results['bioactive_ranking'] = bio_ranking_results
 
-            self.conf_results[smiles]['normalized_rank'] = {}
-            self.conf_results[smiles]['normalized_rank']['model'] = generated_preds.argsort().argsort() / n_generated
-            ranks_ccdc = np.array(range(n_generated))
-            self.conf_results[smiles]['normalized_rank']['ccdc'] = ranks_ccdc / n_generated
-            self.conf_results[smiles]['normalized_rank']['energy'] = generated_energies.argsort().argsort() / n_generated
-            self.rng.shuffle(generated_preds)
-            self.conf_results[smiles]['normalized_rank']['random'] = generated_preds.argsort().argsort() / n_generated
+            # Generated conformations ranking
+            actives_i = np.argwhere(generated_targets < self.bioactive_threshold)
+            if actives_i.shape[0] : # at least 1 active
+                activity = [True if i in actives_i else False for i in range(len(generated_targets))]
+                conf_results['generated_activity'] = activity
 
-            self.conf_results[smiles]['ranked_lists'] = {}
-
-            self.conf_results[smiles]['ranked_lists']['ccdc'] = preds_array
-
-            # Prediction ranking
-            sorting = np.argsort(preds_array[:, 0])
-            sorted_preds_array = preds_array[sorting]
-            self.conf_results[smiles]['ranked_lists']['model'] = sorted_preds_array
-
-            # Energy ranking
-            preds_array = np.array(list(zip(generated_energies, activity)))
-            sorting = np.argsort(preds_array[:, 0])
-            sorted_preds_array = preds_array[sorting]
-            self.conf_results[smiles]['ranked_lists']['energy'] = sorted_preds_array
-
-            # Random ranking
-            random_preds_array = copy.deepcopy(preds_array)
-            self.rng.shuffle(random_preds_array)
-            self.conf_results[smiles]['ranked_lists']['random'] = random_preds_array
-
-            for fraction in self.ef_fractions :
-                self.mol_results[smiles][f'ef_{fraction}'] = {}
-            self.mol_results[smiles]['bedroc'] = {}
-            rankers = self.conf_results[smiles]['ranked_lists'].keys()
-            include_ranking = True
-            for ranker in rankers :
                 for fraction in self.ef_fractions :
-                    if include_ranking :
-                        ranked_list = self.conf_results[smiles]['ranked_lists'][ranker]
-                        if ranked_list[:, 1].sum() != 0 : # if not enough conf, there are no "bioactive"
-                            ef_result = CalcEnrichment(ranked_list, 
-                                                        col=1, 
-                                                        fractions=[fraction])
-                            if len(ef_result) :
-                                ef = ef_result[0]
-                            else :
-                                ef = 1
-                            self.mol_results[smiles][f'ef_{fraction}'][ranker] = ef
+                    mol_results[f'ef_{fraction}'] = {}
+                    
+                mol_results['bedroc'] = {}
+                gen_conf_rankers = {'model' : generated_preds,
+                            'ccdc' : np.array(range(n_generated)),
+                            'energy' : generated_energies,
+                            'random' : np.random.randn(n_generated)}
+                gen_ranking_results = {}
+                
+                for ranker, values in gen_conf_rankers.items() :
+                    ranker_results = {}
+                    sorting = values.argsort()
+                    ranks = sorting.argsort()
+                    ranker_results['ranks'] = ranks.tolist()
+                    normalized_ranks = ranks / n_generated
+                    ranker_results['normalized_ranks'] = normalized_ranks.tolist()
+                    values_activity = np.array(list(zip(values, activity))) # compatible with RDKit ranking metrics
+                    ranked_list = values_activity[sorting]
+                    ranker_results['ranked_list'] = ranked_list
+                    
+                    # Enrichment of bioactive-like
+                    efs = []
+                    for fraction in self.ef_fractions :
+                        ef_result = CalcEnrichment(ranked_list, 
+                                                    col=1, 
+                                                    fractions=[fraction])
+                        if not len(ef_result) :
+                            ef = 1
                         else :
-                            include_ranking = False
-                        
-                if include_ranking :
-                    self.mol_results[smiles]['bedroc'][ranker] = CalcBEDROC(self.conf_results[smiles]['ranked_lists'][ranker], col=1, alpha=20)
+                            ef = ef_result[0]
+                        efs.append(ef)
+                    
+                    efs = np.around(efs, decimals=3)
+                    if len(efs) != len(self.ef_fractions) :
+                        import pdb;pdb.set_trace()
+                    for fraction, ef in zip(self.ef_fractions, efs) :
+                        mol_results[f'ef_{fraction}'][ranker] = ef
+                            
+                    mol_results['bedroc'][ranker] = CalcBEDROC(ranked_list, 
+                                                               col=1, 
+                                                               alpha=20)
+                    
+                    gen_ranking_results = ranker_results
+                    
+                conf_results['generated_ranking'] = gen_ranking_results
+        
+        self.mol_results[smiles] = mol_results
+        self.conf_results[smiles] = conf_results
         
         
     def plot_distribution(self,
@@ -470,82 +491,80 @@ class RMSDPredictorEvaluator() :
     def plot_accuracy_to_training_similarity(self) :
         xlabel = 'Similarity to training set'
         ylabel = 'Ratio of molecules with bioactive ranked first'
-        top1_bioactives = []
-        max_sims = []
-        for smiles in self.included_smiles :
-            mol_result = self.mol_results[smiles]
-            top1_bioactives.append(mol_result['top1_bioactive'])
-            max_sims.append(mol_result['max_sim_to_training'])
-        df = self.similarity_bins(sims=max_sims,
-                                  values=top1_bioactives)
-        df.columns = [xlabel, ylabel]
-        sns.barplot(data=df, x=xlabel, y=ylabel)
-        fig_path = os.path.join(self.working_dir, 
-                                'bioactive_accuracy_vs_training_sim.png')
-        plt.savefig(fig_path, dpi=300)
-        plt.close()
+        for ranker in ['model', 'energy', 'random'] :
+            title = ranker
+            top1_bioactives = []
+            max_sims = []
+            for smiles in self.included_smiles :
+                mol_results = self.mol_results[smiles]
+                top1_bioactives.append(mol_results['first_bioactive_rank'][ranker] == 0)
+                max_sims.append(mol_results['max_sim_to_training'])
+            df = self.similarity_bins(sims=max_sims,
+                                    values=top1_bioactives)
+            df.columns = [xlabel, ylabel]
+            sns.barplot(data=df, x=xlabel, y=ylabel)
+            fig_path = os.path.join(self.working_dir, 
+                                    f'bioactive_accuracy_vs_training_sim_{ranker}.png')
+            plt.title(title)
+            plt.savefig(fig_path, dpi=300)
+            plt.close()
         
         
     def plot_accuracy_to_molecule_descriptor(self,
-                                           descriptor='n_heavy_atoms') :
+                                             descriptor='n_heavy_atoms') :
         xlabel = self.get_descriptor_full_name(descriptor)
         ylabel = 'Ratio of molecules with bioactive ranked first'
-        top1_bioactives = []
-        descriptor_values = []
-        for smiles in self.included_smiles :
-            mol_result = self.mol_results[smiles]
-            top1_bioactives.append(mol_result['top1_bioactive'])
-            descriptor_values.append(mol_result[descriptor])
-        df = pd.DataFrame(zip(descriptor_values, top1_bioactives), 
-                          columns=[xlabel, ylabel])
-        
-        sns.lineplot(data=df, x=xlabel, y=ylabel)
-        fig_path = os.path.join(self.working_dir, 
-                                f'bioactive_accuracy_vs_{descriptor}.png')
-        plt.savefig(fig_path, dpi=300)
-        plt.close()
+        for ranker in ['model', 'energy', 'random'] :
+            top1_bioactives = []
+            descriptor_values = []
+            for smiles in self.included_smiles :
+                mol_result = self.mol_results[smiles]
+                top1_bioactives.append(mol_result['first_bioactive_rank'][ranker] == 0)
+                descriptor_values.append(mol_result[descriptor])
+            df = pd.DataFrame(zip(descriptor_values, top1_bioactives), 
+                            columns=[xlabel, ylabel])
+            
+            sns.lineplot(data=df, x=xlabel, y=ylabel)
+            fig_path = os.path.join(self.working_dir, 
+                                    f'bioactive_accuracy_vs_{descriptor}_{ranker}.png')
+            plt.savefig(fig_path, dpi=300)
+            plt.close()
         
         
     def get_rank_and_max_sims(self,
-                            normalized=True) :
+                              ranker,
+                              normalized=True) :
         
         min_bioactive_ranks = []
         max_sims = []
         
         for smiles in self.included_smiles :
             mol_result = self.mol_results[smiles]
-            rank = mol_result['min_bioactive_ranks']
             if normalized :
-                n_bioactive = mol_result['n_bioactive']
-                n_generated = mol_result['n_generated']
-                n_confs = n_bioactive + n_generated
-                normalized_rank = rank / n_confs
-                min_bioactive_ranks.append(normalized_rank)
+                rank = mol_result['normalized_first_bioactive_rank'][ranker]
             else :
-                min_bioactive_ranks.append(rank)
+                rank = mol_result['first_bioactive_rank'][ranker]
+            min_bioactive_ranks.append(rank)
             max_sims.append(mol_result['max_sim_to_training'])
             
         return max_sims, min_bioactive_ranks
     
     
     def get_rank_and_descriptors(self,
-                                descriptor='n_heavy_atoms',
-                                normalized=True) :
+                                 ranker,
+                                 descriptor='n_heavy_atoms',
+                                 normalized=True) :
         
         descriptor_values = []
         min_bioactive_ranks = []
         
         for smiles in self.included_smiles :
             mol_result = self.mol_results[smiles]
-            rank = mol_result['min_bioactive_ranks']
             if normalized :
-                n_bioactive = mol_result['n_bioactive']
-                n_generated = mol_result['n_generated']
-                n_confs = n_bioactive + n_generated
-                normalized_rank = rank / n_confs
-                min_bioactive_ranks.append(normalized_rank)
+                rank = mol_result['normalized_first_bioactive_rank'][ranker]
             else :
-                min_bioactive_ranks.append(rank)
+                rank = mol_result['first_bioactive_rank'][ranker]
+            min_bioactive_ranks.append(rank)
             descriptor_values.append(mol_result[descriptor])
             
         return descriptor_values, min_bioactive_ranks
@@ -558,15 +577,17 @@ class RMSDPredictorEvaluator() :
             ylabel = 'Normalized rank of bioactive'
         else :
             ylabel = 'Rank of bioactive conformation'
-        max_sims, min_bioactive_ranks = self.get_rank_and_max_sims(normalized=normalized)
-        df = self.similarity_bins(sims=max_sims,
-                                  values=min_bioactive_ranks)
-        df.columns = [xlabel, ylabel]
-        sns.barplot(data=df, x=xlabel, y=ylabel)
-        fig_path = os.path.join(self.working_dir, 
-                                'median_rank_vs_training_sim.png')
-        plt.savefig(fig_path, dpi=300)
-        plt.close()
+        for ranker in ['model', 'energy', 'random'] :
+            max_sims, min_bioactive_ranks = self.get_rank_and_max_sims(ranker=ranker,
+                                                                       normalized=normalized)
+            df = self.similarity_bins(sims=max_sims,
+                                      values=min_bioactive_ranks)
+            df.columns = [xlabel, ylabel]
+            sns.barplot(data=df, x=xlabel, y=ylabel)
+            fig_path = os.path.join(self.working_dir, 
+                                    f'first_bio_rank_vs_training_sim_{ranker}.png')
+            plt.savefig(fig_path, dpi=300)
+            plt.close()
         
         
     def plot_rank_to_molecule_descriptor(self,
@@ -578,16 +599,18 @@ class RMSDPredictorEvaluator() :
             ylabel = 'Normalized rank of bioactive'
         else :
             ylabel = 'Rank of bioactive conformation'
-        descriptor_values, min_bioactive_ranks = self.get_rank_and_descriptors(descriptor=descriptor,
-                                                                               normalized=normalized)
-        df = pd.DataFrame(zip(descriptor_values, min_bioactive_ranks), 
-                          columns=[xlabel, ylabel])
-        
-        sns.lineplot(data=df, x=xlabel, y=ylabel)
-        fig_path = os.path.join(self.working_dir, 
-                                f'median_rank_vs_{descriptor}.png')
-        plt.savefig(fig_path, dpi=300)
-        plt.close()
+        for ranker in ['model', 'energy', 'random'] :
+            descriptor_values, min_bioactive_ranks = self.get_rank_and_descriptors(ranker=ranker,
+                                                                                    descriptor=descriptor,
+                                                                                normalized=normalized)
+            df = pd.DataFrame(zip(descriptor_values, min_bioactive_ranks), 
+                            columns=[xlabel, ylabel])
+            
+            sns.lineplot(data=df, x=xlabel, y=ylabel)
+            fig_path = os.path.join(self.working_dir, 
+                                    f'first_bio_rank_vs_{descriptor}_{ranker}.png')
+            plt.savefig(fig_path, dpi=300)
+            plt.close()
         
         
     def plot_ef_to_training_similarity(self,
@@ -602,8 +625,11 @@ class RMSDPredictorEvaluator() :
             mol_result = self.mol_results[smiles]
             include_ranking = True
             for ranker in self.rankers :
-                if ranker in mol_result[f'ef_{fraction}'] and include_ranking :
-                    efs[ranker].append(mol_result[f'ef_{fraction}'][ranker])
+                if f'ef_{fraction}' in mol_result :
+                    if ranker in mol_result[f'ef_{fraction}'] and include_ranking :
+                        efs[ranker].append(mol_result[f'ef_{fraction}'][ranker])
+                    else :
+                        include_ranking = False
                 else :
                     include_ranking = False
             if include_ranking :
@@ -632,8 +658,11 @@ class RMSDPredictorEvaluator() :
             mol_result = self.mol_results[smiles]
             include_ranking = True
             for ranker in self.rankers :
-                if ranker in mol_result[f'ef_{fraction}'] and include_ranking :
-                    efs[ranker].append(mol_result[f'ef_{fraction}'][ranker])
+                if f'ef_{fraction}' in mol_result :
+                    if ranker in mol_result[f'ef_{fraction}'] and include_ranking :
+                        efs[ranker].append(mol_result[f'ef_{fraction}'][ranker])
+                    else :
+                        include_ranking = False
                 else :
                     include_ranking = False
             if include_ranking :
@@ -660,9 +689,10 @@ class RMSDPredictorEvaluator() :
             for fraction in self.ef_fractions :
                 for smiles in self.included_smiles :
                     mol_result = self.mol_results[smiles]
-                    if ranker in mol_result[f'ef_{fraction}'] :
-                        xs.append(fraction)
-                        ys.append(mol_result[f'ef_{fraction}'][ranker])
+                    if f'ef_{fraction}' in mol_result :
+                        if ranker in mol_result[f'ef_{fraction}'] :
+                            xs.append(fraction)
+                            ys.append(mol_result[f'ef_{fraction}'][ranker])
             current_df = pd.DataFrame(zip(xs, ys), columns=[xlabel, ylabel])
             current_df['ranker'] = ranker
             df = df.append(current_df, ignore_index=True)
@@ -693,14 +723,14 @@ class RMSDPredictorEvaluator() :
         all_bioactive_preds = []
         all_generated_targets = []
         all_generated_preds = []
-        for smiles, results_d in self.conf_results.items() :
+        for smiles, conf_results in self.conf_results.items() :
             if smiles in self.included_smiles :
-                all_targets.extend([target for target in results_d['targets']])
-                all_preds.extend([target for target in results_d['preds']])
-                all_bioactive_preds.extend([target for target in results_d['bioactive_preds']])
-                if 'generated_targets' in results_d :
-                    all_generated_targets.extend([target for target in results_d['generated_targets']])
-                    all_generated_preds.extend([pred for pred in results_d['generated_preds']])
+                all_targets.extend([target for target in conf_results['targets']])
+                all_preds.extend([target for target in conf_results['preds']])
+                all_bioactive_preds.extend([target for target in conf_results['bioactive_preds']])
+                if 'generated_targets' in conf_results :
+                    all_generated_targets.extend([target for target in conf_results['generated_targets']])
+                    all_generated_preds.extend([pred for pred in conf_results['generated_preds']])
 
         #self.plot_regression(all_targets, all_preds)
 
@@ -720,17 +750,16 @@ class RMSDPredictorEvaluator() :
         self.dataset_results['regression']['Macro'] = {}
         for metric in self.dataset_results['regression']['Micro'].keys() :
             metric_values = []
-            for smiles, results_d in self.mol_results.items() :
+            for smiles, mol_results in self.mol_results.items() :
                 if smiles in self.included_smiles :
-                    if metric in results_d :
-                        metric_values.append(results_d[metric])
+                    if metric in mol_results :
+                        metric_values.append(mol_results[metric])
             #self.plot_distribution(values=metric_values, name=metric)
             self.dataset_results['regression']['Macro'][metric] = np.mean(metric_values)
      
             
-    def bioactive_evaluation(self) :
-        self.dataset_results['bioactive_accuracy'] = {}
-            
+    def bioactive_evaluation(self) :   
+        
         if len(self.training_smiles) :
             self.plot_accuracy_to_training_similarity()
             self.plot_rank_to_training_similarity()
@@ -739,52 +768,53 @@ class RMSDPredictorEvaluator() :
             self.plot_accuracy_to_molecule_descriptor(descriptor=descriptor)
             self.plot_rank_to_molecule_descriptor(descriptor=descriptor)
             
-        all_bioactive_ranks = []
-        for smiles, results_d in self.conf_results.items() :
-            if smiles in self.included_smiles :
-                all_bioactive_ranks.extend([rank for rank in results_d['bioactive_ranks']])
-        
-        all_min_bioactive_ranks = []
-        all_min_normalized_bioactive_ranks = []
-        top1_accuracies = []
-        topn_accuracies = []
-        for smiles, results_d in self.mol_results.items() :
-            if smiles in self.included_smiles :
-                min_bioactive_rank = results_d['min_bioactive_ranks']
-                n_bioactive = results_d['n_bioactive']
-                n_generated = results_d['n_generated']
-                n_confs = n_bioactive + n_generated
-                normalized_bioactive_rank = min_bioactive_rank / n_confs
-                all_min_bioactive_ranks.append(min_bioactive_rank)
-                all_min_normalized_bioactive_ranks.append(normalized_bioactive_rank)
-                top1_accuracies.append(results_d['top1_bioactive'])
-                topn_accuracies.append(results_d['topN_bioactive'])
-        
-        self.plot_distribution_bioactive_ranks(all_bioactive_ranks)
-        
-        q1, median, q3 = np.quantile(all_bioactive_ranks, [0.25, 0.5, 0.75])
-        self.dataset_results['bioactive_accuracy']['q1_all_bioactive'] = q1
-        self.dataset_results['bioactive_accuracy']['median_all_bioactive'] = median
-        self.dataset_results['bioactive_accuracy']['q3_all_bioactive'] = q3
+        bioactive_ranking_results = {}
+        for ranker in ['model', 'energy', 'random'] :
+            bioactive_ranking_results[ranker] = {}
+            all_bioactive_ranks = []
+            for smiles, conf_results in self.conf_results.items() :
+                if smiles in self.included_smiles :
+                    ranker_results = conf_results['bioactive_ranking'][ranker]
+                    bioactive_ranks = ranker_results['bioactive_ranks']
+                    all_bioactive_ranks.extend([rank for rank in bioactive_ranks])
+            
+            all_min_bioactive_ranks = []
+            all_min_normalized_bioactive_ranks = []
+            top1_accuracies = []
+            for smiles, mol_results in self.mol_results.items() :
+                if smiles in self.included_smiles :
+                    min_bioactive_rank = mol_results['first_bioactive_rank'][ranker]
+                    normalized_bioactive_rank = mol_results['normalized_first_bioactive_rank'][ranker]
+                    all_min_bioactive_ranks.append(min_bioactive_rank)
+                    all_min_normalized_bioactive_ranks.append(normalized_bioactive_rank)
+                    top1_accuracies.append(mol_results['first_bioactive_rank'][ranker] == 0)
+            
+            self.plot_distribution_bioactive_ranks(all_bioactive_ranks, 
+                                                   suffix=f'{ranker}_all')
+            
+            q1, median, q3 = np.quantile(all_bioactive_ranks, [0.25, 0.5, 0.75])
+            bioactive_ranking_results[ranker]['q1_all_bioactive'] = q1
+            bioactive_ranking_results[ranker]['median_all_bioactive'] = median
+            bioactive_ranking_results[ranker]['q3_all_bioactive'] = q3
 
-        self.plot_distribution_bioactive_ranks(all_min_bioactive_ranks, 
-                                               suffix='min')
+            self.plot_distribution_bioactive_ranks(all_min_bioactive_ranks, 
+                                                   suffix=f'{ranker}_first')
+            
+            q1, median, q3 = np.quantile(all_min_bioactive_ranks, [0.25, 0.5, 0.75])
+            bioactive_ranking_results[ranker]['q1_min_bioactive'] = q1
+            bioactive_ranking_results[ranker]['median_min_bioactive'] = median
+            bioactive_ranking_results[ranker]['q3_min_bioactive'] = q3
+            
+            self.plot_distribution_bioactive_ranks(all_min_normalized_bioactive_ranks,
+                                                   suffix=f'normalized_{ranker}')
+            q1, median, q3 = np.quantile(all_min_normalized_bioactive_ranks, [0.25, 0.5, 0.75])
+            bioactive_ranking_results[ranker]['q1_normalized_bioactive'] = q1
+            bioactive_ranking_results[ranker]['median_normalized_bioactive'] = median
+            bioactive_ranking_results[ranker]['q3_normalized_bioactive'] = q3
+            
+            bioactive_ranking_results[ranker]['mean_top1_accuracy'] = np.mean(top1_accuracies)
         
-        q1, median, q3 = np.quantile(all_min_bioactive_ranks, [0.25, 0.5, 0.75])
-        self.dataset_results['bioactive_accuracy']['q1_min_bioactive'] = q1
-        self.dataset_results['bioactive_accuracy']['median_min_bioactive'] = median
-        self.dataset_results['bioactive_accuracy']['q3_min_bioactive'] = q3
-        
-        self.plot_distribution_bioactive_ranks(all_min_normalized_bioactive_ranks,
-                                               suffix='normalized')
-        q1, median, q3 = np.quantile(all_min_normalized_bioactive_ranks, [0.25, 0.5, 0.75])
-        self.dataset_results['bioactive_accuracy']['q1_normalized_bioactive'] = q1
-        self.dataset_results['bioactive_accuracy']['median_normalized_bioactive'] = median
-        self.dataset_results['bioactive_accuracy']['q3_normalized_bioactive'] = q3
-        
-        self.dataset_results['bioactive_accuracy']['mean_top1_accuracy'] = np.mean(top1_accuracies)
-        self.dataset_results['bioactive_accuracy']['mean_topN_accuracy'] = np.mean(topn_accuracies)
-        
+        self.dataset_results['bioactive_accuracy'] = bioactive_ranking_results
         
         
     def ranking_evaluation(self) :
@@ -798,13 +828,16 @@ class RMSDPredictorEvaluator() :
         for ranker in self.rankers :
             bedrocs = []
             efs = defaultdict(list)
-            for smiles, results_d in self.mol_results.items() :
+            for smiles, mol_results in self.mol_results.items() :
                 if smiles in self.included_smiles :
-                    if 'bedroc' in results_d :
-                        if ranker in results_d['bedroc'] :
-                            bedrocs.append(results_d['bedroc'][ranker])
+                    if 'bedroc' in mol_results :
+                        if ranker in mol_results['bedroc'] :
+                            bedrocs.append(mol_results['bedroc'][ranker])
                             for fraction in self.ef_fractions :
-                                efs[fraction].append(results_d[f'ef_{fraction}'][ranker])
+                                try :
+                                    efs[fraction].append(mol_results[f'ef_{fraction}'][ranker])
+                                except :
+                                    import pdb;pdb.set_trace()
             self.dataset_results['ranking'][ranker] = {}
             self.dataset_results['ranking'][ranker]['bedroc'] = np.mean(bedrocs)
             for fraction in self.ef_fractions :

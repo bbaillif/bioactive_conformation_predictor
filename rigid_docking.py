@@ -160,7 +160,7 @@ class RigidDocking() :
             # Rigid
             _, runtime = self.gold_docker.dock_molecules(ccdc_mols=ccdc_mols,
                                                         mol_id=self.rigid_mol_id,
-                                                        n_poses=5,
+                                                        n_poses=10,
                                                         rigid=True,
                                                         return_runtime=True)
             results['rigid']['runtime'] = runtime
@@ -173,7 +173,7 @@ class RigidDocking() :
                               pdb_id) :
         in_dataset = self.smiles_df['dataset'] == self.dataset
         is_included = self.smiles_df['included']
-        is_pdb_id = self.smiles_df['pdb_id'] == pdb_id
+        is_pdb_id = self.smiles_df['id'] == pdb_id
         filtered_smiles_df = self.smiles_df[in_dataset & is_included & is_pdb_id]
         return filtered_smiles_df['smiles'].values[0]
         
@@ -391,7 +391,7 @@ class RigidDocking() :
             else :
                 split_name = self.split_name
             self.model_checkpoint_dir = os.path.join('lightning_logs',
-                                                    f'{split_name}_split_{self.split_i}_v2',
+                                                    f'{split_name}_split_{self.split_i}',
                                                     'checkpoints')
             self.model_checkpoint_name = os.listdir(self.model_checkpoint_dir)[0]
             self.model_checkpoint_path = os.path.join(self.model_checkpoint_dir,
@@ -418,7 +418,7 @@ class RigidDocking() :
             self.pose_selectors = {}
             for split_name in ['random', 'scaffold', 'protein'] :
                 self.model_checkpoint_dir = os.path.join('lightning_logs',
-                                                    f'{split_name}_split_{self.split_i}_v2',
+                                                    f'{split_name}_split_{self.split_i}',
                                                     'checkpoints')
                 self.model_checkpoint_name = os.listdir(self.model_checkpoint_dir)[0]
                 self.model_checkpoint_path = os.path.join(self.model_checkpoint_dir,
@@ -703,10 +703,10 @@ if __name__ == '__main__':
 
     rigid_docking.dock_molecule_pool(test_pdb_ids=test_pdb_ids)
     
-    # start_time = time.time()  
-    # rigid_docking.docking_analysis_pool()
-    # runtime = time.time() - start_time
-    # print(f'{runtime} seconds runtime')
+    start_time = time.time()  
+    rigid_docking.docking_analysis_pool()
+    runtime = time.time() - start_time
+    print(f'{runtime} seconds runtime')
 
-    # rigid_docking.analysis_report()
+    rigid_docking.analysis_report()
             
