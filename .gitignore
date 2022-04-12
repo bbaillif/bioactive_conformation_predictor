@@ -132,8 +132,7 @@ figures/
 data/
 gold_docking/
 gold_docking_postprocessing/
-lightning_logs/
-lightning_logs_old/
+lightning_logs*
 logs/
 old/
 old_results/
@@ -145,3 +144,5 @@ ipynb_checkpoints/
 gold_docking_dude/
 gold_docking*
 old*
+results/
+pharmacophores/
