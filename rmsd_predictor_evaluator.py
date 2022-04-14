@@ -13,7 +13,7 @@ from rdkit.Chem import AllChem
 from torch_geometric.loader import DataLoader
 from rdkit import DataStructs
 from rdkit.Chem.rdMolDescriptors import CalcNumRotatableBonds
-from sklearn.metrics import r2_score, mean_squared_error
+from sklearn.metrics import r2_score, mean_squared_error, roc_curve
 from tqdm import tqdm
 from collections import defaultdict
 from litschnet import LitSchNet
@@ -171,19 +171,28 @@ class RMSDPredictorEvaluator() :
             fig_title = f'Bioactive_rank_distribution.png'
         else :
             fig_title = f'Bioactive_rank_distribution_{suffix}.png'
-        plt.savefig(os.path.join(self.working_dir, fig_title), dpi=300)
+        plt.savefig(os.path.join(self.working_dir, fig_title), dpi=300, transparent=True)
         #plt.show()
         plt.close()
         
         
     def plot_regression(self, targets, preds) :
-        plt.figure(figsize=(8, 8))
-        sns.kdeplot(x=targets, y=preds, fill=True)
-        plt.title(f'Regression')
-        plt.xlabel('RMSD')
-        plt.ylabel('Predicted RMSD')
-        plt.plot([0, 3], [0, 3], c='r')
-        plt.savefig(os.path.join(self.working_dir, f'regression.png'), dpi=300)
+        plt.figure(figsize=(6, 6))
+        plt.scatter(x=targets, y=preds, s=2, c='lightblue')
+        sns.kdeplot(x=targets, y=preds, color='blue')
+        r2 = r2_score(targets, preds)
+        plt.title(f'R2 = {np.around(r2, 2)}')
+        plt.xlabel('ARMSD')
+        plt.ylabel('Predicted ARMSD')
+        
+        max_pred = np.max(preds)
+        max_target = np.max(targets)
+        max_value = max(max_pred, max_target)
+        
+        plt.plot([0, max_value], [0, max_value], c='g')
+        plt.xlim(0, max_value + 0.2)
+        plt.ylim(0, max_value + 0.2)
+        plt.savefig(os.path.join(self.working_dir, f'regression.png'), dpi=300, transparent=True)
         #plt.show()
         plt.close()
         
@@ -234,7 +243,7 @@ class RMSDPredictorEvaluator() :
         n_bioactive = is_bioactive.sum()
         mol_results['n_bioactive'] = int(n_bioactive)
         
-        is_generated = (~is_bioactive)
+        is_generated = ~is_bioactive
         n_generated = is_generated.sum()
         mol_results['n_generated'] = int(n_generated)
         
@@ -295,13 +304,17 @@ class RMSDPredictorEvaluator() :
             conf_results['bioactive_ranking'] = bio_ranking_results
 
             # Generated conformations ranking
-            actives_i = np.argwhere(generated_targets < self.bioactive_threshold)
+            actives_i = np.argwhere(generated_targets <= self.bioactive_threshold)
             if actives_i.shape[0] : # at least 1 active
                 activity = [True if i in actives_i else False for i in range(len(generated_targets))]
                 conf_results['generated_activity'] = activity
+                
+                n_actives = np.sum(activity)
+                mol_results['n_actives'] = n_actives
 
                 for fraction in self.ef_fractions :
                     mol_results[f'ef_{fraction}'] = {}
+                    mol_results[f'normalized_ef_{fraction}'] = {}
                     
                 mol_results['bedroc'] = {}
                 gen_conf_rankers = {'model' : generated_preds,
@@ -323,6 +336,8 @@ class RMSDPredictorEvaluator() :
                     
                     # Enrichment of bioactive-like
                     efs = []
+                    normalized_efs = []
+                    max_ef =  1 / (n_actives / n_generated)
                     for fraction in self.ef_fractions :
                         ef_result = CalcEnrichment(ranked_list, 
                                                     col=1, 
@@ -332,12 +347,17 @@ class RMSDPredictorEvaluator() :
                         else :
                             ef = ef_result[0]
                         efs.append(ef)
+                        normalized_efs.append(ef / max_ef)
                     
-                    efs = np.around(efs, decimals=3)
+                    # efs = np.around(efs, decimals=3)
                     if len(efs) != len(self.ef_fractions) :
                         import pdb;pdb.set_trace()
                     for fraction, ef in zip(self.ef_fractions, efs) :
                         mol_results[f'ef_{fraction}'][ranker] = ef
+                        
+                    # normalized_efs = np.around(normalized_efs, decimals=3)
+                    for fraction, normalized_ef in zip(self.ef_fractions, normalized_efs) :
+                        mol_results[f'normalized_ef_{fraction}'][ranker] = normalized_ef
                             
                     mol_results['bedroc'][ranker] = CalcBEDROC(ranked_list, 
                                                                col=1, 
@@ -361,7 +381,7 @@ class RMSDPredictorEvaluator() :
         plt.ylabel('Counts')
         fig_path = os.path.join(self.working_dir, 
                                 f'distribution_{name}.png')
-        plt.savefig(fig_path, dpi=300)
+        plt.savefig(fig_path, dpi=300, transparent=True)
         #plt.show()
         plt.close()
        
@@ -429,10 +449,21 @@ class RMSDPredictorEvaluator() :
             max_sims.append(mol_result['max_sim_to_training'])
         df = pd.DataFrame(zip(max_sims, losses), 
                           columns=[xlabel, ylabel])
-        sns.jointplot(data=df, x=xlabel, y=ylabel, kind='hist', bins=30, cbar=True)
+        
+        pearson_coeff = np.around(pearsonr(df[xlabel].values, df[ylabel].values)[0], 
+                            3)
+        sns.jointplot(data=df, 
+                      x=xlabel, 
+                      y=ylabel, 
+                      kind='reg', 
+                      xlim=(0, 1.1),
+                      scatter_kws={"s" : 3},
+                      line_kws={"color" : 'red',
+                                "lw" : 2})
+        plt.suptitle(f'Pearson : {pearson_coeff}')
         fig_path = os.path.join(self.working_dir, 
-                                'loss_vs_training_sim_displot.png')
-        plt.savefig(fig_path, dpi=300)
+                                'loss_vs_training_sim.png')
+        plt.savefig(fig_path, dpi=300, transparent=True)
         plt.close()
         
         #RMSE GEN
@@ -445,10 +476,21 @@ class RMSDPredictorEvaluator() :
             max_sims.append(mol_result['max_sim_to_training'])
         df = pd.DataFrame(zip(max_sims, losses), 
                           columns=[xlabel, ylabel])
-        sns.jointplot(data=df, x=xlabel, y=ylabel, kind='hist', bins=30, cbar=True)
+        
+        pearson_coeff = np.around(pearsonr(df[xlabel].values, df[ylabel].values)[0], 
+                            3)
+        sns.jointplot(data=df, 
+                      x=xlabel, 
+                      y=ylabel, 
+                      kind='reg', 
+                      xlim=(0, 1.1),
+                      scatter_kws={"s" : 3},
+                      line_kws={"color" : 'red',
+                                "lw" : 2})
+        plt.suptitle(f'Pearson : {pearson_coeff}')
         fig_path = os.path.join(self.working_dir, 
                                 'rmse_gen_vs_training_sim_displot.png')
-        plt.savefig(fig_path, dpi=300)
+        plt.savefig(fig_path, dpi=300, transparent=True)
         plt.close()
         
         #RMSE BIO
@@ -461,10 +503,21 @@ class RMSDPredictorEvaluator() :
             max_sims.append(mol_result['max_sim_to_training'])
         df = pd.DataFrame(zip(max_sims, losses), 
                           columns=[xlabel, ylabel])
-        sns.jointplot(data=df, x=xlabel, y=ylabel, kind='hist', bins=30, cbar=True)
+        
+        pearson_coeff = np.around(pearsonr(df[xlabel].values, df[ylabel].values)[0], 
+                            3)
+        sns.jointplot(data=df, 
+                      x=xlabel, 
+                      y=ylabel, 
+                      kind='reg', 
+                      xlim=(0, 1.1),
+                      scatter_kws={"s" : 3},
+                      line_kws={"color" : 'red',
+                                "lw" : 2})
+        plt.suptitle(f'Pearson : {pearson_coeff}')
         fig_path = os.path.join(self.working_dir, 
                                 'rmse_bio_vs_training_sim_displot.png')
-        plt.savefig(fig_path, dpi=300)
+        plt.savefig(fig_path, dpi=300, transparent=True)
         plt.close()
         
     
@@ -481,10 +534,19 @@ class RMSDPredictorEvaluator() :
         df = pd.DataFrame(zip(descriptor_values, losses), 
                           columns=[xlabel, ylabel])
         
-        sns.jointplot(data=df, x=xlabel, y=ylabel, kind='hist', bins=30, cbar=True)
+        pearson_coeff = np.around(pearsonr(df[xlabel].values, df[ylabel].values)[0], 
+                            3)
+        sns.jointplot(data=df, 
+                      x=xlabel, 
+                      y=ylabel, 
+                      kind='reg', 
+                      scatter_kws={"s" : 3},
+                      line_kws={"color" : 'red',
+                                "lw" : 2})
+        plt.suptitle(f'Pearson : {pearson_coeff}')
         fig_path = os.path.join(self.working_dir, 
                                 f'loss_vs_{descriptor}.png')
-        plt.savefig(fig_path, dpi=300)
+        plt.savefig(fig_path, dpi=300, transparent=True)
         plt.close()
         
 
@@ -506,7 +568,7 @@ class RMSDPredictorEvaluator() :
             fig_path = os.path.join(self.working_dir, 
                                     f'bioactive_accuracy_vs_training_sim_{ranker}.png')
             plt.title(title)
-            plt.savefig(fig_path, dpi=300)
+            plt.savefig(fig_path, dpi=300, transparent=True)
             plt.close()
         
         
@@ -527,7 +589,7 @@ class RMSDPredictorEvaluator() :
             sns.lineplot(data=df, x=xlabel, y=ylabel)
             fig_path = os.path.join(self.working_dir, 
                                     f'bioactive_accuracy_vs_{descriptor}_{ranker}.png')
-            plt.savefig(fig_path, dpi=300)
+            plt.savefig(fig_path, dpi=300, transparent=True)
             plt.close()
         
         
@@ -580,13 +642,22 @@ class RMSDPredictorEvaluator() :
         for ranker in ['model', 'energy', 'random'] :
             max_sims, min_bioactive_ranks = self.get_rank_and_max_sims(ranker=ranker,
                                                                        normalized=normalized)
-            df = self.similarity_bins(sims=max_sims,
-                                      values=min_bioactive_ranks)
-            df.columns = [xlabel, ylabel]
-            sns.barplot(data=df, x=xlabel, y=ylabel)
+            df = pd.DataFrame(zip(max_sims, min_bioactive_ranks), 
+                            columns=[xlabel, ylabel])
+            pearson_coeff = np.around(pearsonr(df[xlabel].values, df[ylabel].values)[0], 
+                            3)
+            sns.jointplot(data=df, 
+                        x=xlabel, 
+                        y=ylabel, 
+                        kind='reg', 
+                        xlim=(0, 1.1),
+                        scatter_kws={"s" : 3},
+                        line_kws={"color" : 'red',
+                                    "lw" : 2})
+            plt.suptitle(f'Pearson : {pearson_coeff}')
             fig_path = os.path.join(self.working_dir, 
                                     f'first_bio_rank_vs_training_sim_{ranker}.png')
-            plt.savefig(fig_path, dpi=300)
+            plt.savefig(fig_path, dpi=300, transparent=True)
             plt.close()
         
         
@@ -606,10 +677,19 @@ class RMSDPredictorEvaluator() :
             df = pd.DataFrame(zip(descriptor_values, min_bioactive_ranks), 
                             columns=[xlabel, ylabel])
             
-            sns.lineplot(data=df, x=xlabel, y=ylabel)
+            pearson_coeff = np.around(pearsonr(df[xlabel].values, df[ylabel].values)[0], 
+                            3)
+            sns.jointplot(data=df, 
+                        x=xlabel, 
+                        y=ylabel, 
+                        kind='reg',
+                        scatter_kws={"s" : 3},
+                        line_kws={"color" : 'red',
+                                    "lw" : 2})
+            plt.suptitle(f'Pearson : {pearson_coeff}')
             fig_path = os.path.join(self.working_dir, 
                                     f'first_bio_rank_vs_{descriptor}_{ranker}.png')
-            plt.savefig(fig_path, dpi=300)
+            plt.savefig(fig_path, dpi=300, transparent=True)
             plt.close()
         
         
@@ -636,13 +716,22 @@ class RMSDPredictorEvaluator() :
                 max_sims.append(mol_result['max_sim_to_training'])
             
         for ranker in self.rankers :
-            df = self.similarity_bins(sims=max_sims,
-                                    values=efs[ranker])
-            df.columns = [xlabel, ylabel]
-            sns.barplot(data=df, x=xlabel, y=ylabel)
+            df = pd.DataFrame(zip(max_sims, efs[ranker]), 
+                            columns=[xlabel, ylabel])
+            pearson_coeff = np.around(pearsonr(df[xlabel].values, df[ylabel].values)[0], 
+                            3)
+            sns.jointplot(data=df, 
+                        x=xlabel, 
+                        y=ylabel, 
+                        kind='reg', 
+                        xlim=(0, 1.1),
+                        scatter_kws={"s" : 3},
+                        line_kws={"color" : 'red',
+                                    "lw" : 2})
+            plt.suptitle(f'Pearson : {pearson_coeff}')
             fig_path = os.path.join(self.working_dir, 
                                     f'ef10_vs_training_sim_{ranker}.png')
-            plt.savefig(fig_path, dpi=300)
+            plt.savefig(fig_path, dpi=300, transparent=True)
             plt.close()
             
             
@@ -671,41 +760,64 @@ class RMSDPredictorEvaluator() :
         for ranker in self.rankers :
             df = pd.DataFrame(zip(descriptor_values, efs[ranker]), 
                           columns=[xlabel, ylabel])
-            sns.lineplot(data=df, x=xlabel, y=ylabel)
+            pearson_coeff = np.around(pearsonr(df[xlabel].values, df[ylabel].values)[0], 
+                            3)
+            sns.jointplot(data=df, 
+                        x=xlabel, 
+                        y=ylabel, 
+                        kind='reg',
+                        scatter_kws={"s" : 3},
+                        line_kws={"color" : 'red',
+                                    "lw" : 2})
+            plt.suptitle(f'Pearson : {pearson_coeff}')
             fig_path = os.path.join(self.working_dir, 
                                     f'ef10_vs_{descriptor}_{ranker}.png')
-            plt.savefig(fig_path, dpi=300)
+            plt.savefig(fig_path, dpi=300, transparent=True)
             plt.close()
             
             
-    def plot_efs(self) :
+    def plot_efs(self,
+                 normalized=False) :
         
-        xlabel = 'Fraction'
-        ylabel = 'Enrichment factor'
+        xlabel = 'Fraction of ranked generated conformations'
+        if normalized :
+             ylabel = 'Normalized EF of bioactive-like conformations'
+        else :
+            ylabel = 'EF of bioactive-like conformations'
         df = pd.DataFrame(columns=[xlabel, ylabel, 'ranker'])
         for ranker in self.rankers :
             xs = []
             ys = []
             for fraction in self.ef_fractions :
+                if normalized :
+                    ef_entry = f'normalized_ef_{fraction}'
+                else :
+                    ef_entry = f'ef_{fraction}'
                 for smiles in self.included_smiles :
                     mol_result = self.mol_results[smiles]
-                    if f'ef_{fraction}' in mol_result :
-                        if ranker in mol_result[f'ef_{fraction}'] :
+                    if ef_entry in mol_result :
+                        if ranker in mol_result[ef_entry] :
                             xs.append(fraction)
-                            ys.append(mol_result[f'ef_{fraction}'][ranker])
+                            ys.append(mol_result[ef_entry][ranker])
             current_df = pd.DataFrame(zip(xs, ys), columns=[xlabel, ylabel])
             current_df['ranker'] = ranker
             df = df.append(current_df, ignore_index=True)
-        #import pdb; pdb.set_trace()
         sns.lineplot(data=df, x=xlabel, y=ylabel, hue='ranker')
-        plt.title(f'Enrichment factors of the top 10% closest to bioactive')
+        if normalized :
+            filename = 'normalized_efs.png'
+        else :
+            filename = 'efs.png'
         fig_path = os.path.join(self.working_dir, 
-                                    f'efs.png')
-        plt.savefig(fig_path, dpi=300)
+                                filename)
+        plt.savefig(fig_path, dpi=300, transparent=True)
         plt.close()
         
+        if normalized :
+            filename = 'normalized_ef_df.csv'
+        else :
+            filename = 'ef_df.csv'
         df_path = os.path.join(self.working_dir, 
-                               'ef_df.csv')
+                               filename)
         df.to_csv(df_path)
         
         
@@ -732,7 +844,7 @@ class RMSDPredictorEvaluator() :
                     all_generated_targets.extend([target for target in conf_results['generated_targets']])
                     all_generated_preds.extend([pred for pred in conf_results['generated_preds']])
 
-        #self.plot_regression(all_targets, all_preds)
+        self.plot_regression(all_targets, all_preds)
 
         # Micro
         self.dataset_results['regression']['Micro'] = {}
@@ -823,11 +935,13 @@ class RMSDPredictorEvaluator() :
         for descriptor in ['n_heavy_atoms', 'n_rotatable_bonds'] :
             self.plot_ef_to_molecule_descriptor(descriptor=descriptor)
         self.plot_efs()
+        self.plot_efs(normalized=True)
         
         self.dataset_results['ranking'] = {}
         for ranker in self.rankers :
             bedrocs = []
             efs = defaultdict(list)
+            normalized_efs = defaultdict(list)
             for smiles, mol_results in self.mol_results.items() :
                 if smiles in self.included_smiles :
                     if 'bedroc' in mol_results :
@@ -836,11 +950,13 @@ class RMSDPredictorEvaluator() :
                             for fraction in self.ef_fractions :
                                 try :
                                     efs[fraction].append(mol_results[f'ef_{fraction}'][ranker])
+                                    normalized_efs[fraction].append(mol_results[f'normalized_ef_{fraction}'][ranker])
                                 except :
                                     import pdb;pdb.set_trace()
             self.dataset_results['ranking'][ranker] = {}
             self.dataset_results['ranking'][ranker]['bedroc'] = np.mean(bedrocs)
             for fraction in self.ef_fractions :
                 self.dataset_results['ranking'][ranker][f'ef_{fraction}'] = np.mean(efs[fraction])
+                self.dataset_results['ranking'][ranker][f'normalized_ef_{fraction}'] = np.mean(normalized_efs[fraction])
          
     

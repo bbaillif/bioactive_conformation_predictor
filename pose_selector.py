@@ -152,6 +152,27 @@ class RandomPoseSelector(PoseSelector) :
             
         return poses_subset
   
+  
+class IdentityPoseSelector(PoseSelector) :
+    """Does not rank poses, just select up to ratio or number given 
+    as parameter"""
+    
+    def __init__(self,
+                 selector_name: str='CCDC',
+                 ratio: int=0.2,
+                 number=None):
+        super().__init__(selector_name, ratio, number)
+        
+    def select_poses(self,
+                     poses):
+        n_poses = len(poses)
+        single_values = np.ones((n_poses))
+        poses_subset = self.filter_subset(poses, 
+                                          values=single_values)
+            
+        return poses_subset
+  
+  
 class ScorePoseSelector(PoseSelector):
     """Rank poses according to docking score (pose.fitness())"""
     
