@@ -175,28 +175,36 @@ class GOLDDocker() :
                                          self.docked_ligand_name)
         self.settings.output_file = poses_output_file
 
-        for conf_id, ccdc_mol in enumerate(ccdc_mols) :
-            ligand_file = os.path.join(mol_output_dir, 
-                                                f'ligand_{conf_id}.mol2')
-            self.prepare_ligand(ccdc_mol=ccdc_mol,
-                                ligand_file=ligand_file,
-                                n_poses=n_poses)
-        
-        start_time = time.time()
-        conf_file_name = os.path.join(mol_output_dir, f'api_gold.conf')
-        results = self.docker.dock(file_name=conf_file_name)
-        if results.return_code :
-            raise FailedGOLDDockingException()
-        runtime = time.time() - start_time
-        
-        for filename in os.listdir(mol_output_dir) :
-            if 'ligand_' in filename :
-                os.remove(os.path.join(mol_output_dir, filename))
-        
+        if not os.path.exists(poses_output_file) :
+
+            for conf_id, ccdc_mol in enumerate(ccdc_mols) :
+                ligand_file = os.path.join(mol_output_dir, 
+                                                    f'ligand_{conf_id}.mol2')
+                self.prepare_ligand(ccdc_mol=ccdc_mol,
+                                    ligand_file=ligand_file,
+                                    n_poses=n_poses)
+            
+            start_time = time.time()
+            conf_file_name = os.path.join(mol_output_dir, f'api_gold.conf')
+            results = self.docker.dock(file_name=conf_file_name)
+            if results.return_code :
+                raise FailedGOLDDockingException()
+            runtime = time.time() - start_time
+            
+            for filename in os.listdir(mol_output_dir) :
+                if 'ligand_' in filename :
+                    os.remove(os.path.join(mol_output_dir, filename))
+            
+        else :
+            print(poses_output_file, ' already exists')
+            results = None
+            runtime = None
+            
         if return_runtime :
             return results, runtime
         else :
             return results
+
 
     def prepare_ligand(self,
                        ccdc_mol: Molecule,

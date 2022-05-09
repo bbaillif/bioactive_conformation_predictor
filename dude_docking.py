@@ -228,6 +228,7 @@ class DUDEDocking() :
         
         dude_docking_dir = os.path.join(self.gold_docker.output_dir,
                                         self.gold_docker.experiment_id)
+        #dude_docking_dir = '/media/benoit/New Volume/data/gold_docking_dude/jak2/'
         docked_dirs = os.listdir(dude_docking_dir)
         active_dirs = [os.path.join(dude_docking_dir, d)
                        for d in docked_dirs 
@@ -404,12 +405,23 @@ if __name__ == '__main__':
     else :
         targets = [args.target]
         
-    targets = ['drd3']
+    targets = ['pparg', 'drd3']
     for target in targets :
         dude_docking = DUDEDocking(target=target,
                                    rigid_docking=True)
         # dude_docking.dock_pool()
         dude_docking.ef_analysis()
+        dude_docking = DUDEDocking(target=target,
+                                   rigid_docking=False)
+        # dude_docking.dock_pool()
+        dude_docking.ef_analysis()
+        
+    # targets = ['jak2']
+    # for target in targets :
+        # dude_docking = DUDEDocking(target=target,
+        #                            rigid_docking=True)
+        # dude_docking.dock_pool()
+        # dude_docking.ef_analysis()
         # dude_docking = DUDEDocking(target=target,
         #                            rigid_docking=False)
         # dude_docking.dock_pool()

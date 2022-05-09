@@ -119,12 +119,7 @@ class ConfEnsembleLibrary(object) :
                 print(str(e))
                
                
-    def load_metadata(self,
-                      load_dir=None) :
-        # if load_dir is None :
-        #     load_dir = self.conf_ensemble_df_path
-        # elif load_dir == 'merged' :
-        #     load_dir = self.merged_conf_ensemble_dir
+    def load_metadata(self) :
         self.table = pd.read_csv(self.conf_ensemble_df_path, index_col=0)
                
                

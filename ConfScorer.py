@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import copy
 import urllib
 import matplotlib.image as mpimg
+import os
 
 from collections import Counter, defaultdict
 from rdkit import Chem
@@ -142,7 +143,7 @@ class ConfScorer(object) :
                               gen_rdmol: Mol,
                               rmsd_thresholds: list = None,
                               remove_hydrogens: bool = True
-                             ) -> (dict, float) :
+                             ) -> Tuple[dict, float] :
         
         """ 
         Each reference conformation has a closest generated conformation, with a minimum RMSD.
@@ -357,9 +358,11 @@ class ConfScorer(object) :
 class ConfAnalyzer(object) :
     
     def __init__(self):
-        with open('TorLibv2.xml', 'r') as f :
-            lines = f.readlines()
-        self.torsion_patterns = [line.strip()[21:-2] for line in lines if 'smarts' in line]
+        torsion_file_name = 'TorLibv2.xml'
+        if os.path.exists(torsion_file_name) :
+            with open(torsion_file_name, 'r') as f :
+                lines = f.readlines()
+            self.torsion_patterns = [line.strip()[21:-2] for line in lines if 'smarts' in line]
         
         
     def get_conformers_interatom_distances(self,
@@ -485,6 +488,8 @@ class ConfAnalyzer(object) :
                 title = title + f' : WD = {ref_vs_gen_wasserstein:0.3f}'
             plt.title(title)
             sns.histplot(data=dists_df, x='Distance (A)', hue='Conformation Set', bins=50, common_norm=False, stat='density')
+            plt.ticklabel_format(style='plain')
+
             
             newax = fig.add_axes([0.5, 0.05, 1 ,1], anchor='NE')
             im = plt.imread('mol.png')
@@ -583,7 +588,13 @@ class ConfAnalyzer(object) :
 
             fig, ax = plt.subplots(figsize=(10, 5))
             plt.title(f'{begin_atom_idx} - {second_atom_idx} - {third_atom_idx} - {end_atom_idx}')
-            sns.histplot(data=dihedrals_df, x='Dihedral angle (Deg)', hue='ConfSet', binwidth=15, binrange=(-180, 180), common_norm=False, stat='density')
+            #sns.histplot(data=dihedrals_df, x='Dihedral angle (Deg)', hue='ConfSet', binwidth=15, binrange=(-180, 180), common_norm=False, stat='density')
+            sns.histplot(data=dihedrals_df, 
+                         x='Dihedral angle (Deg)', 
+                         hue='ConfSet', 
+                         binwidth=15, 
+                         binrange=(-180, 180), 
+                         multiple='stack')
             plt.xlim(-180, 180)
 
             newax = fig.add_axes([0.5, 0.05, 1 ,1], anchor='NE')
@@ -704,7 +715,7 @@ class ConfAnalyzer(object) :
                          draw_patterns: bool = False) :
         
         if not use_predefined_patterns :
-            dihedral_patterns = sefl._find_dihedral_patterns(library_dict)
+            dihedral_patterns = self._find_dihedral_patterns(library_dict)
             dihedral_patterns = [smarts for smarts, count in dihedral_patterns.most_common()]
         else :
             dihedral_patterns = self.torsion_patterns
