@@ -13,13 +13,12 @@ from rdkit.Chem import AllChem
 from torch_geometric.loader import DataLoader
 from rdkit import DataStructs
 from rdkit.Chem.rdMolDescriptors import CalcNumRotatableBonds
-from sklearn.metrics import r2_score, mean_squared_error, roc_curve
+from sklearn.metrics import r2_score, mean_squared_error
 from tqdm import tqdm
 from collections import defaultdict
 from litschnet import LitSchNet
 from molsize_model import MolSizeModel
-from numpy.random import default_rng
-from rdkit.ML.Scoring.Scoring import CalcBEDROC, CalcEnrichment, CalcAUC, CalcROC
+from rdkit.ML.Scoring.Scoring import CalcBEDROC, CalcEnrichment
 from scipy.stats import pearsonr, spearmanr
 
 class RMSDPredictorEvaluator() :
@@ -48,6 +47,13 @@ class RMSDPredictorEvaluator() :
         self.ef_fractions = np.around(self.ef_fractions, 2)
         
         self.rankers = ['random', 'energy', 'ccdc', 'model']
+        self.clean_ranker_names = {'model' : 'BioSchNet',
+                                   'model_random' : 'BioSchNet (random split)',
+                                   'model_scaffold' : 'BioSchNet (scaffold split)',
+                                   'model_protein' : 'BioSchNet (protein split)',
+                                   'energy' : 'UFF energy',
+                                   'random' : 'Random',
+                                   'ccdc' : 'CCDC'}
         
         # Define pathes
         if not os.path.exists(self.results_dir) :
@@ -62,9 +68,6 @@ class RMSDPredictorEvaluator() :
         self.conf_results = {}
         self.mol_results = {}
         self.dataset_results = {}
-        
-        # For the random shuffle
-        self.rng = default_rng()
     
     def evaluate(self, 
                  dataset,
@@ -105,6 +108,10 @@ class RMSDPredictorEvaluator() :
         self.task = task
         self.included_smiles = []
             
+        self.task_dir = os.path.join(self.working_dir, self.task)
+        if not os.path.exists(self.task_dir) :
+            os.mkdir(self.task_dir)
+            
         # Define if the molecule will be included in dataset evaluation based on task
         for smiles, mol_results in self.mol_results.items() :
             n_generated = mol_results['n_generated']
@@ -117,12 +124,12 @@ class RMSDPredictorEvaluator() :
                 self.included_smiles.append(smiles)
             
         # Dataset level evaluation
-        self.regression_evaluation()
-        self.bioactive_evaluation()
+        # self.regression_evaluation()
+        # self.bioactive_evaluation()
         self.ranking_evaluation()
         
-        self.dataset_results_path = os.path.join(self.working_dir, 
-                                                 f'dataset_results_{self.task}.p')
+        self.dataset_results_path = os.path.join(self.task_dir, 
+                                                 f'dataset_results.p')
         with open(self.dataset_results_path, 'wb') as f:
             pickle.dump(self.dataset_results, f)
         
@@ -271,8 +278,14 @@ class RMSDPredictorEvaluator() :
                 mol_results['n_actives'] = n_actives
 
                 for fraction in self.ef_fractions :
-                    mol_results[f'ef_{fraction}'] = {}
-                    mol_results[f'normalized_ef_{fraction}'] = {}
+                    for metric in [f'ef_{fraction}', f'normalized_ef_{fraction}',
+                                   'first_bioactive_like_rank', 
+                                   'normalized_first_bioactive_like_rank',
+                                   ] :
+                        mol_results[metric] = {}
+                    for metric in ['bioactive_like_ranks',
+                                   'normalized_bioactive_like_ranks'] :
+                        conf_results[metric] = {}
                     
                 mol_results['bedroc'] = {}
                 gen_conf_rankers = {'model' : generated_preds,
@@ -288,9 +301,21 @@ class RMSDPredictorEvaluator() :
                     ranker_results['ranks'] = ranks.tolist()
                     normalized_ranks = ranks / n_generated
                     ranker_results['normalized_ranks'] = normalized_ranks.tolist()
-                    values_activity = np.array(list(zip(values, activity))) # compatible with RDKit ranking metrics
+                    
+                    # transform into RDKit ranking metrics
+                    values_activity = np.array(list(zip(values, activity))) 
                     ranked_list = values_activity[sorting]
                     ranker_results['ranked_list'] = ranked_list
+                    
+                    # Rank of bioactive-like conformations
+                    bioactive_like_ranks = np.argwhere(ranked_list[:, 1] == True)
+                    bioactive_like_ranks = bioactive_like_ranks.reshape(-1)
+                    conf_results['bioactive_like_ranks'][ranker] = bioactive_like_ranks.tolist()
+                    normalized_bioactive_like_ranks = bioactive_like_ranks / n_generated
+                    conf_results['normalized_bioactive_like_ranks'][ranker] = normalized_bioactive_like_ranks.tolist()
+                    
+                    mol_results['first_bioactive_like_rank'][ranker] = float(bioactive_like_ranks[0])
+                    mol_results['normalized_first_bioactive_like_rank'][ranker] = float(normalized_bioactive_like_ranks[0])
                     
                     # Enrichment of bioactive-like
                     efs = []
@@ -328,27 +353,122 @@ class RMSDPredictorEvaluator() :
         self.mol_results[smiles] = mol_results
         self.conf_results[smiles] = conf_results
        
-    
-    def plot_distribution_bioactive_ranks(self, bioactive_ranks, suffix=None) :
-        plt.hist(bioactive_ranks, bins=100)
-        if 'normalized' in suffix :
-            plt.xlabel('Normalized rank')
-        else :
-            plt.xlabel('Rank')
-        plt.ylabel('Count')
-        # if 'normalized' in suffix :
-        #     plt.title('Distribution of bioactive conformations normalized predicted ranks')
-        # else :
-        #     plt.title('Distribution of bioactive conformations predicted ranks')
-        if suffix is None :
-            fig_title = f'Bioactive_rank_distribution.png'
-        else :
-            fig_title = f'Bioactive_rank_distribution_{suffix}.png'
-        plt.tight_layout()
-        fig_path = os.path.join(self.working_dir, fig_title)
-        plt.savefig(fig_path, dpi=300, transparent=True)
-        plt.close()
+       
+    def plot_histogram(self,
+                        values,
+                        xlabel: str,
+                        bins: int=100,
+                        figname_suffix: str=None) :
         
+        df = pd.DataFrame({xlabel : values})
+        with sns.plotting_context('talk') :
+            sns.histplot(data=df,
+                        x=xlabel, 
+                        bins=bins)
+            
+            if figname_suffix is None :
+                fig_title = f'Bioactive_rank_distribution.png'
+            else :
+                fig_title = f'Bioactive_rank_distribution_{figname_suffix}.png'
+            plt.tight_layout()
+            fig_path = os.path.join(self.task_dir, fig_title)
+            plt.savefig(fig_path, dpi=300, transparent=True)
+            plt.close()
+    
+    def plot_distribution_bioactive_ranks(self, 
+                                          bioactive_ranks, 
+                                          suffix=None) :
+        if 'normalized' in suffix :
+            xlabel = 'Normalized rank'
+        else :
+            xlabel = 'Rank'
+        df = pd.DataFrame({xlabel : bioactive_ranks})
+        with sns.plotting_context('talk') :
+            sns.histplot(data=df,
+                        x=xlabel, 
+                        bins=100)
+            
+            if suffix is None :
+                fig_title = f'Bioactive_rank_distribution.png'
+            else :
+                fig_title = f'Bioactive_rank_distribution_{suffix}.png'
+            plt.tight_layout()
+            fig_path = os.path.join(self.task_dir, fig_title)
+            plt.savefig(fig_path, dpi=300, transparent=True)
+            plt.close()
+        
+        
+    def plot_cumulative_ranks(self, 
+                              rankers_ranks,
+                              bioactive=True,
+                              all_ranks=False,
+                              active_ratio_threshold=1) :
+        if bioactive :
+            xlabel = 'Normalized rank of bioactive'
+            suffix = 'bioactive'
+        else :
+            xlabel = 'Normalized rank of bioactive-like'
+            suffix = 'generated'
+            rankers_ranks = self.get_bioactive_like_ranks(all_ranks=all_ranks,
+                                                          active_ratio_threshold=active_ratio_threshold)
+            
+        if all_ranks :
+            suffix = suffix + '_all'
+            
+        master_df = pd.DataFrame()
+        for ranker in rankers_ranks :
+            ranks = rankers_ranks[ranker]
+            df = pd.DataFrame({xlabel : ranks})
+            df['Ranker'] = ranker
+            master_df = pd.concat([master_df, df])
+        
+        master_df['Ranker'] = master_df['Ranker'].replace(self.clean_ranker_names)
+        
+        with sns.plotting_context('talk', font_scale=0.7) :
+            sns.ecdfplot(data=master_df, x=xlabel, hue='Ranker')
+            plt.tight_layout()
+            fig_path = os.path.join(self.task_dir, 
+                                    f'cumulative_bioactive_ranks_{suffix}_{active_ratio_threshold}.png')
+            plt.savefig(fig_path, dpi=300, transparent=True)
+            plt.close()
+            
+            sns.ecdfplot(data=master_df, x=xlabel, hue='Ranker')
+            plt.xlim(-0.01, 0.5)
+            plt.tight_layout()
+            fig_path = os.path.join(self.task_dir, 
+                                    f'cumulative_bioactive_ranks_{suffix}_{active_ratio_threshold}_truncated.png')
+            plt.savefig(fig_path, dpi=300, transparent=True)
+            plt.close()
+            
+        
+    def get_bioactive_like_ranks(self,
+                                 all_ranks=False,
+                                 active_ratio_threshold=1) :
+        if all_ranks :
+            rankers_ranks = defaultdict(list)
+            rank_name = 'normalized_bioactive_like_ranks'
+            for ranker in self.rankers :
+                for smiles in self.included_smiles :
+                    conf_result = self.conf_results[smiles]
+                    if rank_name in conf_result :
+                        ranks = conf_result[rank_name][ranker]
+                        rankers_ranks[ranker].extend(ranks)
+        else :
+            rankers_ranks = defaultdict(list)
+            rank_name = 'normalized_first_bioactive_like_rank'
+            for ranker in self.rankers :
+                for smiles in self.included_smiles :
+                    mol_result = self.mol_results[smiles]
+                    if rank_name in mol_result :
+                        n_actives = mol_result['n_actives']
+                        n_generated = mol_result['n_generated']
+                        active_ratio = n_actives / n_generated
+                        if active_ratio < active_ratio_threshold :
+                            rank = mol_result[rank_name][ranker]
+                            rankers_ranks[ranker].append(rank)
+        
+        return rankers_ranks
+            
         
     def plot_regression(self, targets, preds) :
         
@@ -360,21 +480,22 @@ class RMSDPredictorEvaluator() :
         #sns.kdeplot(x=targets, y=preds, color='royalblue')
         df = pd.DataFrame({'ARMSD' : targets,
                            'Predicted ARMSD' : preds})
-        sns.jointplot(data=df,
-                      x=targets, 
-                      y=preds, 
-                      kind='hist', 
-                      xlim=(0, max_value+ 0.2),
-                      ylim=(0, max_value + 0.2),
-                      joint_kws={'bins':50})
-        # plt.plot([0, max_value], [0, max_value], c='g')
-        r2 = r2_score(targets, preds)
-        plt.suptitle(f'R² = {np.around(r2, 2)}')
-        
-        plt.tight_layout()
-        fig_path = os.path.join(self.working_dir, f'regression.png')
-        plt.savefig(fig_path, dpi=300, transparent=True)
-        plt.close()
+        with sns.plotting_context('talk') :
+            sns.jointplot(data=df,
+                        x='ARMSD', 
+                        y='Predicted ARMSD', 
+                        kind='hist', 
+                        xlim=(0, max_value+ 0.2),
+                        ylim=(0, max_value + 0.2),
+                        joint_kws={'bins':50})
+            # plt.plot([0, max_value], [0, max_value], c='g')
+            r2 = r2_score(targets, preds)
+            # plt.suptitle(f'R² = {np.around(r2, 2)}')
+            
+            plt.tight_layout()
+            fig_path = os.path.join(self.task_dir, f'regression.png')
+            plt.savefig(fig_path, dpi=300, transparent=True)
+            plt.close()
        
        
        
@@ -464,7 +585,7 @@ class RMSDPredictorEvaluator() :
                       line_kws={"color" : 'red',
                                 "lw" : 2})
         plt.suptitle(f'Pearson : {pearson_coeff}')
-        fig_path = os.path.join(self.working_dir, 
+        fig_path = os.path.join(self.task_dir, 
                                 'loss_vs_training_sim.png')
         plt.tight_layout()
         plt.savefig(fig_path, dpi=300, transparent=True)
@@ -473,16 +594,17 @@ class RMSDPredictorEvaluator() :
         df = self.similarity_bins(sims=max_sims,
                                   values=losses)
         df.columns = [xlabel, ylabel]
-        boxplot = sns.boxplot(data=df, 
-                      x=xlabel, 
-                      y=ylabel,
-                      color='royalblue')
-        self.rename_similarity_label(boxplot)
-        fig_path = os.path.join(self.working_dir, 
-                                'loss_vs_training_sim_boxplot.png')
-        plt.tight_layout()
-        plt.savefig(fig_path, dpi=300, transparent=True)
-        plt.close()
+        with sns.plotting_context('talk', font_scale=0.7) :
+            boxplot = sns.boxplot(data=df, 
+                        x=xlabel, 
+                        y=ylabel,
+                        color='royalblue')
+            self.rename_similarity_label(boxplot)
+            fig_path = os.path.join(self.task_dir, 
+                                    'loss_vs_training_sim_boxplot.png')
+            plt.tight_layout()
+            plt.savefig(fig_path, dpi=300, transparent=True)
+            plt.close()
         
         #RMSE GEN
         ylabel = 'Generated conformations RMSE'
@@ -506,7 +628,7 @@ class RMSDPredictorEvaluator() :
                       line_kws={"color" : 'red',
                                 "lw" : 2})
         plt.suptitle(f'Pearson : {pearson_coeff}')
-        fig_path = os.path.join(self.working_dir, 
+        fig_path = os.path.join(self.task_dir, 
                                 'rmse_gen_vs_training_sim_displot.png')
         plt.tight_layout()
         plt.savefig(fig_path, dpi=300, transparent=True)
@@ -534,7 +656,7 @@ class RMSDPredictorEvaluator() :
                       line_kws={"color" : 'red',
                                 "lw" : 2})
         plt.suptitle(f'Pearson : {pearson_coeff}')
-        fig_path = os.path.join(self.working_dir, 
+        fig_path = os.path.join(self.task_dir, 
                                 'rmse_bio_vs_training_sim_displot.png')
         plt.tight_layout()
         plt.savefig(fig_path, dpi=300, transparent=True)
@@ -564,26 +686,27 @@ class RMSDPredictorEvaluator() :
                       line_kws={"color" : 'red',
                                 "lw" : 2})
         plt.suptitle(f'Pearson : {pearson_coeff}')
-        fig_path = os.path.join(self.working_dir, 
+        fig_path = os.path.join(self.task_dir, 
                                 f'loss_vs_{descriptor}.png')
         plt.tight_layout()
         plt.savefig(fig_path, dpi=300, transparent=True)
         plt.close()
         
-        sns.boxplot(data=df, 
-                      x=xlabel, 
-                      y=ylabel,
-                      color='royalblue')
-        fig_path = os.path.join(self.working_dir, 
-                                f'loss_vs_{descriptor}_boxplot.png')
-        plt.tight_layout()
-        plt.savefig(fig_path, dpi=300, transparent=True)
-        plt.close()
+        with sns.plotting_context('talk', font_scale=0.7) :
+            sns.boxplot(data=df, 
+                        x=xlabel, 
+                        y=ylabel,
+                        color='royalblue')
+            fig_path = os.path.join(self.task_dir, 
+                                    f'loss_vs_{descriptor}_boxplot.png')
+            plt.tight_layout()
+            plt.savefig(fig_path, dpi=300, transparent=True)
+            plt.close()
         
 
     def plot_accuracy_to_training_similarity(self) :
         xlabel = 'Similarity to training set'
-        ylabel = 'Fraction of molecules with bioactive ranked first'
+        ylabel = 'Fraction of molecules\nwith bioactive ranked first'
         for ranker in ['model', 'energy', 'random'] :
             title = ranker
             top1_bioactives = []
@@ -595,21 +718,22 @@ class RMSDPredictorEvaluator() :
             df = self.similarity_bins(sims=max_sims,
                                     values=top1_bioactives)
             df.columns = [xlabel, ylabel]
-            barplot = sns.barplot(data=df, x=xlabel, y=ylabel, 
-                                  color="royalblue", ci=None)
-            self.rename_similarity_label(barplot)
-            fig_path = os.path.join(self.working_dir, 
-                                    f'bioactive_accuracy_vs_training_sim_{ranker}.png')
-            #plt.title(title)
-            plt.tight_layout()
-            plt.savefig(fig_path, dpi=300, transparent=True)
-            plt.close()
+            with sns.plotting_context('talk', font_scale=0.7) :
+                barplot = sns.barplot(data=df, x=xlabel, y=ylabel, 
+                                    color="royalblue", ci=None)
+                self.rename_similarity_label(barplot)
+                fig_path = os.path.join(self.task_dir, 
+                                        f'bioactive_accuracy_vs_training_sim_{ranker}.png')
+                #plt.title(title)
+                plt.tight_layout()
+                plt.savefig(fig_path, dpi=300, transparent=True)
+                plt.close()
         
         
     def plot_accuracy_to_molecule_descriptor(self,
                                              descriptor='n_heavy_atoms') :
         xlabel = self.get_descriptor_full_name(descriptor)
-        ylabel = 'Fraction of molecules with bioactive ranked first'
+        ylabel = 'Fraction of molecules\nwith bioactive ranked first'
         for ranker in ['model', 'energy', 'random'] :
             top1_bioactives = []
             descriptor_values = []
@@ -619,29 +743,62 @@ class RMSDPredictorEvaluator() :
                 descriptor_values.append(mol_result[descriptor])
             df = pd.DataFrame(zip(descriptor_values, top1_bioactives), 
                             columns=[xlabel, ylabel])
+            with sns.plotting_context('talk', font_scale=0.7) :
+                barplot = sns.barplot(data=df, x=xlabel, y=ylabel, 
+                                    color="royalblue", ci=None)
+                fig_path = os.path.join(self.task_dir, 
+                                        f'bioactive_accuracy_vs_{descriptor}_{ranker}.png')
+                plt.tight_layout()
+                plt.savefig(fig_path, dpi=300, transparent=True)
+                plt.close()
+        
+        
+    def _get_rank_name(self,
+                      normalized=True,
+                      bioactive=True) :
+        rank_name = ''
+        if normalized :
+            rank_name = rank_name + 'normalized_'
+        if bioactive :
+            rank_name = rank_name + 'first_bioactive_rank'
+        else :
+            rank_name = rank_name + 'first_bioactive_like_rank'
+        return rank_name
+        
+        
+    def get_rank_and_property(self,
+                                 ranker,
+                                 property='n_heavy_atoms',
+                                 normalized=True,
+                                 bioactive=True) :
+        
+        rank_name = self._get_rank_name(normalized, bioactive)
+        
+        descriptor_values = []
+        min_bioactive_ranks = []
+        
+        for smiles in self.included_smiles :
+            mol_result = self.mol_results[smiles]
+            if rank_name in mol_result :
+                rank = mol_result[rank_name][ranker]
+                min_bioactive_ranks.append(rank)
+                descriptor_values.append(mol_result[property])
             
-            barplot = sns.barplot(data=df, x=xlabel, y=ylabel, 
-                                  color="royalblue", ci=None)
-            fig_path = os.path.join(self.working_dir, 
-                                    f'bioactive_accuracy_vs_{descriptor}_{ranker}.png')
-            plt.tight_layout()
-            plt.savefig(fig_path, dpi=300, transparent=True)
-            plt.close()
+        return descriptor_values, min_bioactive_ranks
         
         
     def get_rank_and_max_sims(self,
                               ranker,
-                              normalized=True) :
+                              normalized=True,
+                              bioactive=True) :
+        rank_name = self._get_rank_name(normalized, bioactive)
         
         min_bioactive_ranks = []
         max_sims = []
         
         for smiles in self.included_smiles :
             mol_result = self.mol_results[smiles]
-            if normalized :
-                rank = mol_result['normalized_first_bioactive_rank'][ranker]
-            else :
-                rank = mol_result['first_bioactive_rank'][ranker]
+            rank = mol_result[rank_name][ranker]
             min_bioactive_ranks.append(rank)
             max_sims.append(mol_result['max_sim_to_training'])
             
@@ -651,17 +808,17 @@ class RMSDPredictorEvaluator() :
     def get_rank_and_descriptors(self,
                                  ranker,
                                  descriptor='n_heavy_atoms',
-                                 normalized=True) :
+                                 normalized=True,
+                                 bioactive=True) :
+        
+        rank_name = self._get_rank_name(normalized, bioactive)
         
         descriptor_values = []
         min_bioactive_ranks = []
         
         for smiles in self.included_smiles :
             mol_result = self.mol_results[smiles]
-            if normalized :
-                rank = mol_result['normalized_first_bioactive_rank'][ranker]
-            else :
-                rank = mol_result['first_bioactive_rank'][ranker]
+            rank = mol_result[rank_name][ranker]
             min_bioactive_ranks.append(rank)
             descriptor_values.append(mol_result[descriptor])
             
@@ -669,15 +826,24 @@ class RMSDPredictorEvaluator() :
         
         
     def plot_rank_to_training_similarity(self,
-                                         normalized=True) :
+                                         normalized=True,
+                                         bioactive=True) :
+        if bioactive :
+            confset = 'bioactive'
+        else :
+            confset = 'bioactive_like'
+            
         xlabel = 'Maximum similarity to training set'
         if normalized :
-            ylabel = 'Normalized rank of bioactive'
+            ylabel = f'Normalized rank of {confset}'
         else :
-            ylabel = 'Rank of bioactive conformation'
+            ylabel = f'Rank of {confset} conformation'
+            
         for ranker in ['model', 'energy', 'random'] :
-            max_sims, min_bioactive_ranks = self.get_rank_and_max_sims(ranker=ranker,
-                                                                       normalized=normalized)
+            max_sims, min_bioactive_ranks = self.get_rank_and_property(ranker=ranker,
+                                                                       property='max_sim_to_training',
+                                                                       normalized=normalized,
+                                                                       bioactive=bioactive)
             df = pd.DataFrame(zip(max_sims, min_bioactive_ranks), 
                             columns=[xlabel, ylabel])
             pearson_coeff = np.around(pearsonr(df[xlabel].values, df[ylabel].values)[0], 
@@ -691,8 +857,8 @@ class RMSDPredictorEvaluator() :
                         line_kws={"color" : 'red',
                                     "lw" : 2})
             plt.suptitle(f'Pearson : {pearson_coeff}')
-            fig_path = os.path.join(self.working_dir, 
-                                    f'first_bio_rank_vs_training_sim_{ranker}.png')
+            fig_path = os.path.join(self.task_dir, 
+                                    f'first_{confset}_rank_vs_training_sim_{ranker}.png')
             plt.tight_layout()
             plt.savefig(fig_path, dpi=300, transparent=True)
             plt.close()
@@ -700,27 +866,34 @@ class RMSDPredictorEvaluator() :
             df = self.similarity_bins(sims=max_sims,
                                       values=min_bioactive_ranks)
             df.columns = [xlabel, ylabel]
-            boxplot = sns.boxplot(data=df, x=xlabel, y=ylabel, color="royalblue")
-            self.rename_similarity_label(boxplot)
-            fig_path = os.path.join(self.working_dir, 
-                                    f'first_bio_rank_vs_training_sim_{ranker}_boxplot.png')
-            plt.tight_layout()
-            plt.savefig(fig_path, dpi=300, transparent=True)
-            plt.close()
-        
+            with sns.plotting_context('talk', font_scale=0.7) :
+                boxplot = sns.boxplot(data=df, x=xlabel, y=ylabel, color="royalblue")
+                self.rename_similarity_label(boxplot)
+                fig_path = os.path.join(self.task_dir, 
+                                        f'first_{confset}_rank_vs_training_sim_{ranker}_boxplot.png')
+                plt.tight_layout()
+                plt.savefig(fig_path, dpi=300, transparent=True)
+                plt.close()
+                
         
     def plot_rank_to_molecule_descriptor(self,
-                                           descriptor='n_heavy_atoms',
-                                           normalized=True) :
+                                         descriptor='n_heavy_atoms',
+                                         normalized=True,
+                                         bioactive=True) :
+        
+        if bioactive :
+            confset = 'bioactive'
+        else :
+            confset = 'bioactive-like'
         
         xlabel = self.get_descriptor_full_name(descriptor)
         if normalized :
-            ylabel = 'Normalized rank of bioactive'
+            ylabel = f'Normalized rank of {confset}'
         else :
-            ylabel = 'Rank of bioactive conformation'
+            ylabel = f'Rank of {confset} conformation'
         for ranker in ['model', 'energy', 'random'] :
-            descriptor_values, min_bioactive_ranks = self.get_rank_and_descriptors(ranker=ranker,
-                                                                                    descriptor=descriptor,
+            descriptor_values, min_bioactive_ranks = self.get_rank_and_property(ranker=ranker,
+                                                                                property=descriptor,
                                                                                 normalized=normalized)
             df = pd.DataFrame(zip(descriptor_values, min_bioactive_ranks), 
                             columns=[xlabel, ylabel])
@@ -735,18 +908,19 @@ class RMSDPredictorEvaluator() :
                         line_kws={"color" : 'red',
                                     "lw" : 2})
             plt.suptitle(f'Pearson : {pearson_coeff}')
-            fig_path = os.path.join(self.working_dir, 
-                                    f'first_bio_rank_vs_{descriptor}_{ranker}.png')
+            fig_path = os.path.join(self.task_dir, 
+                                    f'first_{confset}_rank_vs_{descriptor}_{ranker}.png')
             plt.tight_layout()
             plt.savefig(fig_path, dpi=300, transparent=True)
             plt.close()
             
-            sns.boxplot(data=df, x=xlabel, y=ylabel, color="royalblue")
-            fig_path = os.path.join(self.working_dir, 
-                                    f'first_bio_rank_vs_{descriptor}_{ranker}_boxplot.png')
-            plt.tight_layout()
-            plt.savefig(fig_path, dpi=300, transparent=True)
-            plt.close()
+            with sns.plotting_context('talk', font_scale=0.7) :
+                sns.boxplot(data=df, x=xlabel, y=ylabel, color="royalblue")
+                fig_path = os.path.join(self.task_dir, 
+                                        f'first_{confset}_rank_vs_{descriptor}_{ranker}_boxplot.png')
+                plt.tight_layout()
+                plt.savefig(fig_path, dpi=300, transparent=True)
+                plt.close()
         
         
     def plot_ef_to_training_similarity(self,
@@ -785,11 +959,23 @@ class RMSDPredictorEvaluator() :
                         line_kws={"color" : 'red',
                                     "lw" : 2})
             plt.suptitle(f'Pearson : {pearson_coeff}')
-            fig_path = os.path.join(self.working_dir, 
+            fig_path = os.path.join(self.task_dir, 
                                     f'ef10_vs_training_sim_{ranker}.png')
             plt.tight_layout()
             plt.savefig(fig_path, dpi=300, transparent=True)
             plt.close()
+            
+            df = self.similarity_bins(sims=max_sims,
+                                      values=efs[ranker])
+            df.columns = [xlabel, ylabel]
+            with sns.plotting_context('talk', font_scale=0.7) :
+                boxplot = sns.boxplot(data=df, x=xlabel, y=ylabel, color="royalblue")
+                self.rename_similarity_label(boxplot)
+                fig_path = os.path.join(self.task_dir, 
+                                        f'ef10_vs_training_sim_{ranker}_boxplot.png')
+                plt.tight_layout()
+                plt.savefig(fig_path, dpi=300, transparent=True)
+                plt.close()
             
             
     def plot_ef_to_molecule_descriptor(self,
@@ -827,11 +1013,18 @@ class RMSDPredictorEvaluator() :
                         line_kws={"color" : 'red',
                                     "lw" : 2})
             plt.suptitle(f'Pearson : {pearson_coeff}')
-            fig_path = os.path.join(self.working_dir, 
+            fig_path = os.path.join(self.task_dir, 
                                     f'ef10_vs_{descriptor}_{ranker}.png')
             plt.tight_layout()
             plt.savefig(fig_path, dpi=300, transparent=True)
             plt.close()
+            with sns.plotting_context('talk', font_scale=0.7) :
+                boxplot = sns.boxplot(data=df, x=xlabel, y=ylabel, color="royalblue")
+                fig_path = os.path.join(self.task_dir, 
+                                        f'ef10_vs_{descriptor}_{ranker}_boxplot.png')
+                plt.tight_layout()
+                plt.savefig(fig_path, dpi=300, transparent=True)
+                plt.close()
             
             
     def plot_efs(self,
@@ -860,22 +1053,23 @@ class RMSDPredictorEvaluator() :
             current_df = pd.DataFrame(zip(xs, ys), columns=[xlabel, ylabel])
             current_df['ranker'] = ranker
             df = df.append(current_df, ignore_index=True)
-        sns.lineplot(data=df, x=xlabel, y=ylabel, hue='ranker')
-        if normalized :
-            filename = 'normalized_efs.png'
-        else :
-            filename = 'efs.png'
-        fig_path = os.path.join(self.working_dir, 
-                                filename)
-        plt.tight_layout()
-        plt.savefig(fig_path, dpi=300, transparent=True)
-        plt.close()
+        with sns.plotting_context('talk', font_scale=0.7) :
+            sns.lineplot(data=df, x=xlabel, y=ylabel, hue='ranker')
+            if normalized :
+                filename = 'normalized_efs.png'
+            else :
+                filename = 'efs.png'
+            fig_path = os.path.join(self.task_dir, 
+                                    filename)
+            plt.tight_layout()
+            plt.savefig(fig_path, dpi=300, transparent=True)
+            plt.close()
         
         if normalized :
             filename = 'normalized_ef_df.csv'
         else :
             filename = 'ef_df.csv'
-        df_path = os.path.join(self.working_dir, 
+        df_path = os.path.join(self.task_dir, 
                                filename)
         df.to_csv(df_path)
         
@@ -939,6 +1133,7 @@ class RMSDPredictorEvaluator() :
             self.plot_rank_to_molecule_descriptor(descriptor=descriptor)
             
         bioactive_ranking_results = {}
+        rankers_bioactive_ranks = {}
         for ranker in ['model', 'energy', 'random'] :
             bioactive_ranking_results[ranker] = {}
             all_bioactive_ranks = []
@@ -975,6 +1170,7 @@ class RMSDPredictorEvaluator() :
             bioactive_ranking_results[ranker]['median_min_bioactive'] = median
             bioactive_ranking_results[ranker]['q3_min_bioactive'] = q3
             
+            rankers_bioactive_ranks[ranker] = all_min_normalized_bioactive_ranks
             self.plot_distribution_bioactive_ranks(all_min_normalized_bioactive_ranks,
                                                    suffix=f'normalized_{ranker}')
             q1, median, q3 = np.quantile(all_min_normalized_bioactive_ranks, [0.25, 0.5, 0.75])
@@ -984,27 +1180,38 @@ class RMSDPredictorEvaluator() :
             
             bioactive_ranking_results[ranker]['mean_top1_accuracy'] = np.mean(top1_accuracies)
         
+        self.plot_cumulative_ranks(rankers_bioactive_ranks)
+        
         self.dataset_results['bioactive_accuracy'] = bioactive_ranking_results
         
         
     def ranking_evaluation(self) :
         
+        if self.task in ['all', 'hard'] :
+            self.plot_cumulative_ranks(None, bioactive=False, active_ratio_threshold=0.05)
+        self.plot_cumulative_ranks(None, bioactive=False)
+        self.plot_cumulative_ranks(None, bioactive=False, all_ranks=True)
+        
+        self.plot_rank_to_training_similarity(bioactive=False)
         self.plot_ef_to_training_similarity()
         for descriptor in ['n_heavy_atoms', 'n_rotatable_bonds'] :
+            self.plot_rank_to_molecule_descriptor(descriptor=descriptor, bioactive=False)
             self.plot_ef_to_molecule_descriptor(descriptor=descriptor)
-        self.plot_efs()
-        self.plot_efs(normalized=True)
+        # self.plot_efs()
+        # self.plot_efs(normalized=True)
         
         self.dataset_results['ranking'] = {}
         for ranker in self.rankers :
             bedrocs = []
             efs = defaultdict(list)
             normalized_efs = defaultdict(list)
+            normalized_first_bioactive_like_ranks = []
             for smiles, mol_results in self.mol_results.items() :
                 if smiles in self.included_smiles :
                     if 'bedroc' in mol_results :
                         if ranker in mol_results['bedroc'] :
                             bedrocs.append(mol_results['bedroc'][ranker])
+                            normalized_first_bioactive_like_ranks.append(mol_results['normalized_first_bioactive_like_rank'][ranker])
                             for fraction in self.ef_fractions :
                                 try :
                                     efs[fraction].append(mol_results[f'ef_{fraction}'][ranker])
@@ -1013,6 +1220,11 @@ class RMSDPredictorEvaluator() :
                                     import pdb;pdb.set_trace()
             self.dataset_results['ranking'][ranker] = {}
             self.dataset_results['ranking'][ranker]['bedroc'] = np.mean(bedrocs)
+            self.dataset_results['ranking'][ranker]['median_normalized_bioactive_like_rank'] = np.median(normalized_first_bioactive_like_ranks)
+            fraction_top_bioactive_like = len([r 
+                                               for r in normalized_first_bioactive_like_ranks
+                                               if r == 0]) / len(normalized_first_bioactive_like_ranks)
+            self.dataset_results['ranking'][ranker]['fraction_top_bioactive_like'] = fraction_top_bioactive_like
             for fraction in self.ef_fractions :
                 self.dataset_results['ranking'][ranker][f'ef_{fraction}'] = np.mean(efs[fraction])
                 self.dataset_results['ranking'][ranker][f'normalized_ef_{fraction}'] = np.mean(normalized_efs[fraction])

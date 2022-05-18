@@ -161,7 +161,6 @@ class RigidDocking() :
                 except Exception as e :
                     print(f'{pdb_id} not included')
                     print(str(e))
-                    #import pdb;pdb.set_trace()
                     
         print(f'Number of threads : {len(params)}')
         with Pool(processes=12, maxtasksperchild=1) as pool :
@@ -173,7 +172,7 @@ class RigidDocking() :
                     try :
                         item = iterator.next(timeout=600)
                     except TimeoutError:
-                        print("We lacked patience and got a multiprocessing.TimeoutError")
+                        print("Docking is too long, returning TimeoutError")
 
                 except StopIteration:
                     done_looping = True
@@ -185,6 +184,7 @@ class RigidDocking() :
         ccdc_mols = [self.ccdc_rdkit_connector.rdkit_conf_to_ccdc_mol(rdkit_mol=rdkit_mol,
                                                                         conf_id=conf_id)
                             for conf_id in range(rdkit_mol.GetNumConformers())]
+        results = None
         try :
             results = self.dock_molecule_conformations(ccdc_mols=ccdc_mols,
                                                        pdb_id=pdb_id)
@@ -309,7 +309,6 @@ class RigidDocking() :
                 print(f'{pdb_id} failed')
                 print(str(e))
             
-        import pdb;pdb.set_trace()
         print(f'Number of threads : {len(params)}')
         if single :
             for p in params :
@@ -321,9 +320,9 @@ class RigidDocking() :
                 while not done_looping:
                     try:
                         try :
-                            results = iterator.next(timeout=60)
+                            results = iterator.next(timeout=600)
                         except TimeoutError:
-                            print("We lacked patience and got a multiprocessing.TimeoutError")
+                            print("Analysis is too long, returning TimeoutError")
                             return 0
                     except StopIteration:
                         done_looping = True
@@ -395,9 +394,14 @@ class RigidDocking() :
                 results['rigid']['overlay_rmsd_top_score'] = float(overlay_rmsds[top_score_index])
                 
                 top_rmsd_index = np.array(ligand_rmsds).argsort()[0]
-                results['rigid']['top_rmsd'] = float(ligand_rmsds[top_rmsd_index])
+                results['rigid']['score_top_rmsd'] = float(scores[top_rmsd_index])
                 results['rigid']['ligand_rmsd_top_rmsd'] = float(ligand_rmsds[top_rmsd_index])
                 results['rigid']['overlay_rmsd_top_rmsd'] = float(overlay_rmsds[top_rmsd_index])
+                
+                top_overlay_rmsd_index = np.array(overlay_rmsds).argsort()[0]
+                results['rigid']['score_top_overlay_rmsd'] = float(scores[top_overlay_rmsd_index])
+                results['rigid']['ligand_rmsd_top_overlay_rmsd'] = float(ligand_rmsds[top_overlay_rmsd_index])
+                results['rigid']['overlay_rmsd_top_overlay_rmsd'] = float(overlay_rmsds[top_overlay_rmsd_index])
                 
                 # Score/RMSD figures for flexible poses
                 scores, ligand_rmsds, overlay_rmsds = self.evaluate_poses(poses=flexible_poses,
@@ -491,10 +495,10 @@ class RigidDocking() :
         top_indexes['score'] = defaultdict(list)
         top_indexes['ligand_rmsd'] = defaultdict(list)
         top_indexes['overlay_rmsd'] = defaultdict(list)
-        top_indexes['docking_power'] = defaultdict(list)
+        top_indexes['first_successful_pose'] = defaultdict(list)
         top_indexes['correct_conf'] = defaultdict(list)
         
-        flexible_docking_power = defaultdict(list)
+        flexible_first_successful_pose = defaultdict(list)
         flexible_generation_power = defaultdict(list)
         rigid_generation_power = defaultdict(list)
         
@@ -503,28 +507,33 @@ class RigidDocking() :
             rigid_result = result['rigid']
             flexible_result = result['flexible']
             
-            if 'top_rmsd' in rigid_result :
+            if 'overlay_rmsd_top_overlay_rmsd' in rigid_result :
                 
-                good_docking = (rigid_result['top_rmsd'] <= self.bioactive_rmsd_threshold) or (flexible_result['ligand_rmsd_top_score'] <= self.bioactive_rmsd_threshold)
+                top_overlay_rmsd = rigid_result['overlay_rmsd_top_overlay_rmsd']
+                has_bioactive_like = top_overlay_rmsd <= self.bioactive_rmsd_threshold
+                rigid_good_docking = rigid_result['ligand_rmsd_top_rmsd'] <= self.bioactive_rmsd_threshold
+                # flexible_good_docking = flexible_result['top_ligand_rmsd'] <= self.bioactive_rmsd_threshold
+                good_docking = rigid_good_docking # or flexible_good_docking
+                good_docking_condition = ((only_good_docking and good_docking) or not only_good_docking)
                 
-                if (only_good_docking and good_docking) or not only_good_docking :
+                if has_bioactive_like and good_docking_condition :
                 
                     for ranker in rankers :
                         top_indexes['score'][ranker].append(rigid_result[ranker]['top_score_index'])
                         top_indexes['ligand_rmsd'][ranker].append(rigid_result[ranker]['top_rmsd_index'])
                         top_indexes['overlay_rmsd'][ranker].append(rigid_result[ranker]['top_overlay_rmsd_index'])
                         if 'bioactive_pose_first_index' in rigid_result[ranker] :
-                            top_indexes['docking_power'][ranker].append(rigid_result[ranker]['bioactive_pose_first_index'])
+                            top_indexes['first_successful_pose'][ranker].append(rigid_result[ranker]['bioactive_pose_first_index'])
                         if 'bioactive_conf_first_index' in rigid_result[ranker] :
                             top_indexes['correct_conf'][ranker].append(rigid_result[ranker]['bioactive_conf_first_index'])
             
-                    flexible_docking_power['top_score_pose'].append(flexible_result['ligand_rmsd_top_score'] <= self.bioactive_rmsd_threshold)
-                    flexible_docking_power['top_ligand_rmsd_pose'].append(flexible_result['top_ligand_rmsd'] <= self.bioactive_rmsd_threshold)
+                    flexible_first_successful_pose['top_score_pose'].append(flexible_result['ligand_rmsd_top_score'] <= self.bioactive_rmsd_threshold)
+                    flexible_first_successful_pose['top_ligand_rmsd_pose'].append(flexible_result['top_ligand_rmsd'] <= self.bioactive_rmsd_threshold)
                     flexible_generation_power['top_score_pose'].append(flexible_result['overlay_rmsd_top_score'] <= self.bioactive_rmsd_threshold)
                     rigid_generation_power['top_score_pose'].append(rigid_result['overlay_rmsd_top_score'] <= self.bioactive_rmsd_threshold)
         
-        recall_flexible_top_score = np.array(flexible_docking_power['top_score_pose'])
-        recall_flexible_top_ligand_rmsd = np.array(flexible_docking_power['top_ligand_rmsd_pose'])
+        recall_flexible_top_score = np.array(flexible_first_successful_pose['top_score_pose'])
+        recall_flexible_top_ligand_rmsd = np.array(flexible_first_successful_pose['top_ligand_rmsd_pose'])
         recall_flexible_overlay_rmsd = np.array(flexible_generation_power['top_score_pose'])
         n_flexible_mols = len(recall_flexible_top_score)
         
@@ -569,13 +578,11 @@ class RigidDocking() :
                 current_df['ranker'] = ranker
                 df = df.append(current_df, ignore_index=True)
                     
-            plot_df = df[df['metric'] == metric]
-            
-            #import pdb; pdb.set_trace()
+                plot_df = df[df['metric'] == metric]
             
             sns.lineplot(data=plot_df, x=xlabel, y=ylabel, hue='ranker')
             
-            if metric in ['docking_power', 'correct_conf'] :
+            if metric in ['first_successful_pose', 'correct_conf'] :
                 # plt.axhline(y=recall_flexible_top_score.sum(), 
                 #             label='Flexible docking power top score',
                 #             color='grey')
@@ -586,8 +593,8 @@ class RigidDocking() :
                             label='Total number of molecules',
                             color='black')
                 
-            if metric == 'docking_power' :
-                title = 'Docking power'
+            if metric == 'first_successful_pose' :
+                title = 'Successful docking'
             elif metric == 'ligand_rmsd' :
                 title = 'Retrieval of best pose'
             else :
@@ -601,7 +608,8 @@ class RigidDocking() :
                 suffix = 'all'
             
             fig_name = f'retrieval_{metric}_{split}_{suffix}.png'
-            save_path = os.path.join('figures/',
+            save_path = os.path.join('results/', 
+                                     f'{split}_split_{split_i}_pdbbind/',
                                      fig_name)
             plt.savefig(save_path)
             plt.clf()
@@ -636,16 +644,16 @@ if __name__ == '__main__':
     rigid_docking = RigidDocking()
     
     splits = ['random', 'scaffold', 'protein']
-    split_is = [0]
+    split_is = list(range(5))
     test_pdb_ids = rigid_docking.get_test_pdb_ids(splits=splits,
                                                   split_is=split_is)
 
     rigid_docking.dock_molecule_pool(test_pdb_ids=test_pdb_ids)
     
-    # start_time = time.time()  
-    # rigid_docking.docking_analysis_pool()
-    # runtime = time.time() - start_time
-    # print(f'{runtime} seconds runtime')
+    start_time = time.time()
+    rigid_docking.docking_analysis_pool()
+    runtime = time.time() - start_time
+    print(f'{runtime} seconds runtime')
 
-    # rigid_docking.analysis_report()
+    rigid_docking.analysis_report()
             

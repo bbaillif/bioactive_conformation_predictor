@@ -568,15 +568,30 @@ class ConfAnalyzer(object) :
         for begin_atom_idx, second_atom_idx, third_atom_idx, end_atom_idx in dihedrals_atom_ids :
 
             dihedrals = []
-            confset = []
+            confsets = []
             for mol_setname, mol in mol_dict.items() :
                 mol_dihedrals = self.get_conformers_dihedrals_deg(mol, begin_atom_idx, second_atom_idx, third_atom_idx, end_atom_idx)
                 dihedrals.append(mol_dihedrals)
-                confset = confset + [mol_setname] * len(mol_dihedrals)
+                confsets = confsets + [mol_setname] * len(mol_dihedrals)
 
             dihedrals = np.hstack(dihedrals)
-
-            dihedrals_df = pd.DataFrame(list(zip(dihedrals, confset)), columns=['Dihedral angle (Deg)', 'ConfSet'])
+            dihedrals_rad = np.deg2rad(dihedrals)
+            coss = np.cos(dihedrals_rad)
+            sins = np.sin(dihedrals_rad)
+            
+            unique_confsets = mol_dict.keys()
+            for scale, confset in enumerate(unique_confsets) :
+                scale = scale + 1 
+                confset_index = [i
+                                 for i, cs in enumerate(confsets)
+                                 if confset == cs]
+                coss[confset_index] = coss[confset_index] * scale
+                sins[confset_index] = sins[confset_index] * scale
+            
+            dihedrals_df = pd.DataFrame({'Dihedral angle (Deg)' : dihedrals,
+                                         'cos' : coss,
+                                         'sin' : sins,
+                                         'Conformation Set' : confsets})
 
             other_mol = copy.deepcopy(list(mol_dict.values())[0])
             Chem.rdDepictor.Compute2DCoords(other_mol)
@@ -586,22 +601,39 @@ class ConfAnalyzer(object) :
             d2d.FinishDrawing()
             d2d.WriteDrawingText('mol.png') 
 
-            fig, ax = plt.subplots(figsize=(10, 5))
-            plt.title(f'{begin_atom_idx} - {second_atom_idx} - {third_atom_idx} - {end_atom_idx}')
-            #sns.histplot(data=dihedrals_df, x='Dihedral angle (Deg)', hue='ConfSet', binwidth=15, binrange=(-180, 180), common_norm=False, stat='density')
-            sns.histplot(data=dihedrals_df, 
-                         x='Dihedral angle (Deg)', 
-                         hue='ConfSet', 
-                         binwidth=15, 
-                         binrange=(-180, 180), 
-                         multiple='stack')
-            plt.xlim(-180, 180)
+            # fig, ax = plt.subplots(figsize=(10, 5))
+            # plt.title(f'{begin_atom_idx} - {second_atom_idx} - {third_atom_idx} - {end_atom_idx}')
+            # #sns.histplot(data=dihedrals_df, x='Dihedral angle (Deg)', hue='ConfSet', binwidth=15, binrange=(-180, 180), common_norm=False, stat='density')
+            # sns.histplot(data=dihedrals_df, 
+            #              x='Dihedral angle (Deg)', 
+            #              hue='Conformation Set', 
+            #              binwidth=15, 
+            #              binrange=(-180, 180), 
+            #              multiple='stack')
+            # plt.xlim(-180, 180)
 
-            newax = fig.add_axes([0.5, 0.05, 1 ,1], anchor='NE')
+            # newax = fig.add_axes([0.5, 0.05, 1 ,1], anchor='NE')
+            # im = plt.imread('mol.png')
+            # newax.imshow(im)
+            # newax.axis('off')
+
+            # plt.show()
+            # plt.clf()
+            
+            fig, ax = plt.subplots(figsize=(5, 5))
+            sns.scatterplot(data=dihedrals_df,
+                            x='cos',
+                            y='sin',
+                            hue='Conformation Set')
+            lims = (-len(unique_confsets) - 0.1, len(unique_confsets) + 0.1)
+            plt.title(f'{begin_atom_idx} - {second_atom_idx} - {third_atom_idx} - {end_atom_idx}')
+            plt.xlim(*lims)
+            plt.ylim(*lims)
+            plt.plot(0, 0, 'ko')
+            newax = fig.add_axes([1, -0.05, 1 ,1], anchor='NE')
             im = plt.imread('mol.png')
             newax.imshow(im)
             newax.axis('off')
-
             plt.show()
             plt.clf()
             
@@ -767,7 +799,7 @@ class ConfAnalyzer(object) :
 
         return correct_matches
     
-    def _find_dihedral_patterns(self,library_dict) :
+    def _find_dihedral_patterns(self, library_dict) :
         dihedral_patterns = Counter()
         for library_name, mol_list in library_dict.items() :
             for mol in mol_list :

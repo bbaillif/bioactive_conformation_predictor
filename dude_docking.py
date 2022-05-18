@@ -80,6 +80,7 @@ class DUDEDocking() :
         
         self.gold_docker = GOLDDocker(protein_path=self.protein_path,
                                       native_ligand_path=self.ligand_path,
+                                      output_dir='/hdd/gold_docking_dude',
                                       experiment_id=self.experiment_id)
         
         for mol_id, ccdc_mol in zip(mol_ids, all_mols) :
@@ -151,6 +152,7 @@ class DUDEDocking() :
             
             self.gold_docker = GOLDDocker(protein_path=self.protein_path,
                                         native_ligand_path=self.ligand_path,
+                                        output_dir='/hdd/gold_docking_dude',
                                         experiment_id=self.experiment_id) 
             results = self.gold_docker.dock_molecules(ccdc_mols=ccdc_mols,
                                                     mol_id=mol_id,
@@ -193,6 +195,7 @@ class DUDEDocking() :
         
         self.gold_docker = GOLDDocker(protein_path=self.protein_path,
                                       native_ligand_path=self.ligand_path,
+                                      output_dir='/hdd/gold_docking_dude',
                                       experiment_id=self.experiment_id)
         self.mol_featurizer = MoleculeFeaturizer()
         
@@ -228,7 +231,6 @@ class DUDEDocking() :
         
         dude_docking_dir = os.path.join(self.gold_docker.output_dir,
                                         self.gold_docker.experiment_id)
-        #dude_docking_dir = '/media/benoit/New Volume/data/gold_docking_dude/jak2/'
         docked_dirs = os.listdir(dude_docking_dir)
         active_dirs = [os.path.join(dude_docking_dir, d)
                        for d in docked_dirs 
@@ -405,7 +407,7 @@ if __name__ == '__main__':
     else :
         targets = [args.target]
         
-    targets = ['pparg', 'drd3']
+    targets = ['bace1']
     for target in targets :
         dude_docking = DUDEDocking(target=target,
                                    rigid_docking=True)
@@ -413,7 +415,7 @@ if __name__ == '__main__':
         dude_docking.ef_analysis()
         dude_docking = DUDEDocking(target=target,
                                    rigid_docking=False)
-        # dude_docking.dock_pool()
+        dude_docking.dock_pool()
         dude_docking.ef_analysis()
         
     # targets = ['jak2']
