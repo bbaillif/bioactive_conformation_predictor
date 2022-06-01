@@ -92,7 +92,7 @@ class ConfEnsembleLibrary(object) :
             load_dir = self.merged_conf_ensemble_dir
         elif load_dir == 'generated' :
             load_dir = self.gen_conf_ensemble_dir
-        self.load_metadata(load_dir=load_dir)
+        self.load_metadata()
             
         for smiles, file_name in tqdm(self.table.values):
             try :

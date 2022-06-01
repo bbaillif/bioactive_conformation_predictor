@@ -15,7 +15,7 @@ from molecule_featurizer import MoleculeFeaturizer
 from litschnet import LitSchNet
 from gold_docker import GOLDDocker
 from pose_reader import PoseReader
-from pose_selector import (Pose,
+from pose_selector import (IdentityPoseSelector, Pose,
                            RandomPoseSelector,
                            ScorePoseSelector,
                            EnergyPoseSelector,
@@ -95,16 +95,16 @@ class DUDEDocking() :
                 print(f'Docking failed for {mol_id}')
                 
                 
-    def dock_pool(self) :
+    def dock_pool(self, max_n_actives=50) :
         
         active_mols_reader = MoleculeReader(self.actives_path)
-        n_actives = len(active_mols_reader)
-        active_mols = [mol for mol in active_mols_reader]
+        active_mols = [mol for mol in active_mols_reader][:max_n_actives]
+        n_actives = len(active_mols)
         active_mol_ids = [f'active_{i}' for i in range(n_actives)]
         
         decoy_mols_reader = MoleculeReader(self.decoys_path)
-        n_decoys = len(decoy_mols_reader)
-        decoy_mols = [mol for mol in decoy_mols_reader]
+        n_decoys = 50 * n_actives
+        decoy_mols = [mol for mol in decoy_mols_reader][:n_decoys]
         decoy_mol_ids = [f'decoy_{i}' for i in range(n_decoys)]
         
         all_mols = active_mols + decoy_mols
@@ -207,7 +207,7 @@ class DUDEDocking() :
         for split in ['random', 'scaffold', 'protein'] :
         
             model_checkpoint_dir = os.path.join('lightning_logs',
-                                                    f'{split}_split_0',
+                                                    f'{split}_split_2', # 2 is taken since there is no CDK2 in this split
                                                     'checkpoints')
             model_checkpoint_name = os.listdir(model_checkpoint_dir)[0]
             model_checkpoint_path = os.path.join(model_checkpoint_dir,
@@ -228,6 +228,7 @@ class DUDEDocking() :
         self.pose_selectors['score'] = ScorePoseSelector(ratio=1)
         self.pose_selectors['energy'] = EnergyPoseSelector(mol_featurizer=self.mol_featurizer,
                                                             ratio=1)
+        self.pose_selectors['ccdc'] = IdentityPoseSelector(ratio=1)
         
         dude_docking_dir = os.path.join(self.gold_docker.output_dir,
                                         self.gold_docker.experiment_id)
@@ -312,10 +313,8 @@ class DUDEDocking() :
         
         
     def evaluate_molecule(self,
-                          directory,
-                          subset: str='active') :
+                          directory) :
         max_scores = {}
-        assert subset in ['active', 'decoy']
         poses = self.get_poses(directory=directory)
         if poses :
             included = True
@@ -407,11 +406,11 @@ if __name__ == '__main__':
     else :
         targets = [args.target]
         
-    targets = ['bace1']
+    targets = ['cp3a4']
     for target in targets :
         dude_docking = DUDEDocking(target=target,
                                    rigid_docking=True)
-        # dude_docking.dock_pool()
+        dude_docking.dock_pool()
         dude_docking.ef_analysis()
         dude_docking = DUDEDocking(target=target,
                                    rigid_docking=False)

@@ -1,9 +1,8 @@
 import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
-import matplotlib as mpl
-import matplotlib.cm as cm
 import copy
+import os
 
 from rdkit import Chem
 from rdkit.Chem.Draw import rdMolDraw2D
@@ -12,6 +11,7 @@ from torch_geometric.nn import radius_graph
 from torch_scatter import scatter
 from molecule_featurizer import MoleculeFeaturizer
 from torch_geometric.data import Batch
+from mol_drawer import MolDrawer
 
 class AtomicSchNet(SchNet) :
     def forward(self, z, pos, batch=None):
@@ -114,35 +114,21 @@ class LitSchNet(pl.LightningModule):
         return self.schnet(batch.x.squeeze().long(), 
                            batch.pos, 
                            batch.batch)
-        
-    def score_to_rgba_color(self, score, vmin=0, vmax=1) :
-        cmap = cm.RdBu
-        norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
-        normalized_map = cm.ScalarMappable(norm=norm, cmap=cmap)
-        rgba = normalized_map.to_rgba(score)
-        return rgba
          
-    def show_atomic_contributions(self, mol, suffix='') :
+    def show_atomic_contributions(self, 
+                                  mol, 
+                                  save_dir: str=None) :
         mol_featurizer = MoleculeFeaturizer()
         data_list = mol_featurizer.featurize_mol(mol)
         batch = Batch.from_data_list(data_list)
         atomic_contributions = self.get_atomic_contributions(batch)
         atomic_contributions = atomic_contributions
-        pred_min = atomic_contributions.min()
-        pred_max = atomic_contributions.max()
         for batch_i in batch.batch.unique() :
             pred_is = atomic_contributions[batch.batch == batch_i]
-            pred_is = pred_is.numpy()
-            copy_mol = copy.deepcopy(mol)
-            Chem.rdDepictor.Compute2DCoords(copy_mol)
+            pred_is = pred_is.numpy().reshape(-1)
             
-            d = rdMolDraw2D.MolDraw2DCairo(1000, 1000)
-            d.drawOptions().addAtomIndices=True
-            atoms = range(copy_mol.GetNumAtoms())
-            colors = {i : self.score_to_rgba_color(pred_is[i][0], pred_min, pred_max) for i in atoms}
-            rdMolDraw2D.PrepareAndDrawMolecule(d, 
-                                            copy_mol, 
-                                            highlightAtoms=atoms, 
-                                            highlightAtomColors=colors)
-            d.FinishDrawing()
-            d.WriteDrawingText(f'atomic_contributions/mol{batch_i}_relative_{suffix}.png')
+            MolDrawer().plot_values_for_mol(mol=mol,
+                                            values=pred_is,
+                                            suffix=batch_i,
+                                            save_dir=save_dir)
+            

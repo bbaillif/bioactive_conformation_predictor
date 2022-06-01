@@ -97,35 +97,47 @@ class RMSDPredictorEvaluator() :
         else :
             print(f'Evaluation already done for given experiment {self.evaluation_name}')
             print('Loading existing results')
-            with open(self.mol_results_path, 'rb') as f:
-                self.mol_results = pickle.load(f)
-            with open(self.conf_results_path, 'rb') as f:
-                self.conf_results = pickle.load(f)
+            self.load_existing_results()
         
+    
+    def load_existing_results(self) :
+        with open(self.mol_results_path, 'rb') as f:
+            self.mol_results = pickle.load(f)
+        with open(self.conf_results_path, 'rb') as f:
+            self.conf_results = pickle.load(f)
+        
+        
+    def get_included_smiles(self, 
+                            task: str='all') :
+        # Define if the molecule will be included in dataset evaluation based on task
+        included_smiles = []
+        
+        for smiles, mol_results in self.mol_results.items() :
+            n_generated = mol_results['n_generated']
+            has_generated = n_generated > 1
+            is_easy = n_generated < 100
+            is_hard = n_generated == 100
+            task_filter = (task == 'all') or (task == 'hard' and is_hard) or (task == 'easy' and is_easy)
+            include_smiles = task_filter and has_generated
+            if include_smiles :
+                included_smiles.append(smiles)
+                
+        return included_smiles
         
     def evaluation_report(self, 
                           task: str='all') :
         self.task = task
-        self.included_smiles = []
             
         self.task_dir = os.path.join(self.working_dir, self.task)
         if not os.path.exists(self.task_dir) :
             os.mkdir(self.task_dir)
             
         # Define if the molecule will be included in dataset evaluation based on task
-        for smiles, mol_results in self.mol_results.items() :
-            n_generated = mol_results['n_generated']
-            has_generated = n_generated > 1
-            is_easy = n_generated < 100
-            is_hard = n_generated == 100
-            task_filter = (self.task == 'all') or (self.task == 'hard' and is_hard) or (self.task == 'easy' and is_easy)
-            include_smiles = task_filter and has_generated
-            if include_smiles :
-                self.included_smiles.append(smiles)
+        self.included_smiles = self.get_included_smiles(task)
             
         # Dataset level evaluation
-        # self.regression_evaluation()
-        # self.bioactive_evaluation()
+        self.regression_evaluation()
+        self.bioactive_evaluation()
         self.ranking_evaluation()
         
         self.dataset_results_path = os.path.join(self.task_dir, 
@@ -270,7 +282,7 @@ class RMSDPredictorEvaluator() :
 
             # Generated conformations ranking
             actives_i = np.argwhere(generated_targets <= self.bioactive_threshold)
-            if actives_i.shape[0] : # at least 1 active
+            if actives_i.shape[0] >= 1: # at least 1 active
                 activity = [True if i in actives_i else False for i in range(len(generated_targets))]
                 conf_results['generated_activity'] = activity
                 
@@ -693,6 +705,7 @@ class RMSDPredictorEvaluator() :
         plt.close()
         
         with sns.plotting_context('talk', font_scale=0.7) :
+            plt.figure(figsize=(10, 4))
             sns.boxplot(data=df, 
                         x=xlabel, 
                         y=ylabel,
@@ -759,6 +772,7 @@ class RMSDPredictorEvaluator() :
         rank_name = ''
         if normalized :
             rank_name = rank_name + 'normalized_'
+            
         if bioactive :
             rank_name = rank_name + 'first_bioactive_rank'
         else :
@@ -831,7 +845,7 @@ class RMSDPredictorEvaluator() :
         if bioactive :
             confset = 'bioactive'
         else :
-            confset = 'bioactive_like'
+            confset = 'bioactive-like'
             
         xlabel = 'Maximum similarity to training set'
         if normalized :
@@ -894,7 +908,8 @@ class RMSDPredictorEvaluator() :
         for ranker in ['model', 'energy', 'random'] :
             descriptor_values, min_bioactive_ranks = self.get_rank_and_property(ranker=ranker,
                                                                                 property=descriptor,
-                                                                                normalized=normalized)
+                                                                                normalized=normalized,
+                                                                                bioactive=bioactive)
             df = pd.DataFrame(zip(descriptor_values, min_bioactive_ranks), 
                             columns=[xlabel, ylabel])
             
@@ -915,6 +930,7 @@ class RMSDPredictorEvaluator() :
             plt.close()
             
             with sns.plotting_context('talk', font_scale=0.7) :
+                plt.figure(figsize=(10, 4))
                 sns.boxplot(data=df, x=xlabel, y=ylabel, color="royalblue")
                 fig_path = os.path.join(self.task_dir, 
                                         f'first_{confset}_rank_vs_{descriptor}_{ranker}_boxplot.png')
@@ -1019,6 +1035,7 @@ class RMSDPredictorEvaluator() :
             plt.savefig(fig_path, dpi=300, transparent=True)
             plt.close()
             with sns.plotting_context('talk', font_scale=0.7) :
+                plt.figure(figsize=(10, 4))
                 boxplot = sns.boxplot(data=df, x=xlabel, y=ylabel, color="royalblue")
                 fig_path = os.path.join(self.task_dir, 
                                         f'ef10_vs_{descriptor}_{ranker}_boxplot.png')
@@ -1197,8 +1214,8 @@ class RMSDPredictorEvaluator() :
         for descriptor in ['n_heavy_atoms', 'n_rotatable_bonds'] :
             self.plot_rank_to_molecule_descriptor(descriptor=descriptor, bioactive=False)
             self.plot_ef_to_molecule_descriptor(descriptor=descriptor)
-        # self.plot_efs()
-        # self.plot_efs(normalized=True)
+        self.plot_efs()
+        self.plot_efs(normalized=True)
         
         self.dataset_results['ranking'] = {}
         for ranker in self.rankers :
@@ -1220,7 +1237,8 @@ class RMSDPredictorEvaluator() :
                                     import pdb;pdb.set_trace()
             self.dataset_results['ranking'][ranker] = {}
             self.dataset_results['ranking'][ranker]['bedroc'] = np.mean(bedrocs)
-            self.dataset_results['ranking'][ranker]['median_normalized_bioactive_like_rank'] = np.median(normalized_first_bioactive_like_ranks)
+            median_normalized_first_bioactive_like_rank = np.median(normalized_first_bioactive_like_ranks)
+            self.dataset_results['ranking'][ranker]['median_normalized_bioactive_like_rank'] = median_normalized_first_bioactive_like_rank
             fraction_top_bioactive_like = len([r 
                                                for r in normalized_first_bioactive_like_ranks
                                                if r == 0]) / len(normalized_first_bioactive_like_ranks)

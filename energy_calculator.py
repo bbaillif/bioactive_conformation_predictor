@@ -1,11 +1,12 @@
 import numpy as np
 
 from abc import abstractmethod
+from ase.io import read
 from rdkit import Chem
 from rdkit.Chem import AllChem
 from rdkit.Chem.rdchem import Mol
-from xtb.libxtb import VERBOSITY_MINIMAL
-from xtb.interface import Calculator, Param
+from rdkit.Chem.rdmolfiles import SDWriter
+from xtb.ase.calculator import XTB
 
 class EnergyCalculator() :
     
@@ -17,22 +18,16 @@ class EnergyCalculator() :
         
         
 class XtbEnergyCalculator(EnergyCalculator) :
-    
-    def __init__(self) -> None:
-        self.verbose = VERBOSITY_MINIMAL
         
     def get_energy(self,
                    mol: Mol,
                    conf_id: int=0) -> float :
-        # mol = Chem.AddHs(mol, addCoords=True)
-        numbers = [atom.GetAtomicNum() for atom in mol.GetAtoms()]
-        numbers = np.array(numbers)
-        conf = mol.GetConformer(conf_id)
-        positions = conf.GetPositions()
-        calc = Calculator(Param.GFN2xTB, numbers, positions)
-        calc.set_verbosity(self.verbose)
-        res = calc.singlepoint()
-        energy = res.get_energy()
+        sdf_filename = 'mol.sdf'
+        with SDWriter(sdf_filename) as sdwriter :
+            sdwriter.write(Chem.AddHs(mol, addCoords=True))
+        ase_mol = read(sdf_filename)
+        ase_mol.calc = XTB(method="GFN2-xTB")
+        energy = ase_mol.get_potential_energy()
         return energy
     
     
