@@ -53,14 +53,15 @@ from conf_ensemble_library import ConfEnsembleLibrary
 # print(f'{runtime} seconds runtime')
 
 for split in ['random', 'scaffold', 'protein'] :
-    rigid_docking = RigidDocking()
-    # rigid_docking.docking_analysis_pool(split=split,
-    #                                     split_i=0)
-    print('All results')
-    rigid_docking.analysis_report(split=split,
-                                  split_i=0,
-                                  only_good_docking=False)
-    print('Only good docking results')
-    rigid_docking.analysis_report(split=split,
-                                  split_i=0,
-                                  only_good_docking=True)
+    for split_i in range(5) :
+        rigid_docking = RigidDocking()
+        rigid_docking.docking_analysis_pool(split=split,
+                                            split_i=split_i)
+        print('All results')
+        rigid_docking.analysis_report(split=split,
+                                    split_i=split_i,
+                                    only_good_docking=False)
+        print('Only good docking results')
+        rigid_docking.analysis_report(split=split,
+                                    split_i=split_i,
+                                    only_good_docking=True)
