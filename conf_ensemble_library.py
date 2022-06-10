@@ -150,7 +150,7 @@ class ConfEnsembleLibrary(object) :
                                 standardize_mols=False)
         except Exception as e:
             print(str(e))
-            raise Exception(f'{file_path} is not ok')
+            raise Exception(f'{file_path} does not exist')
                
                 
     def save(self, 

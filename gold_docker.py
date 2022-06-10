@@ -33,7 +33,8 @@ class GOLDDocker() :
                  native_ligand_path: str,
                  experiment_id: str,
                  output_dir: str='gold_docking_dude',
-                 prepare_protein: bool=False
+                 prepare_protein: bool=False,
+                 binding_site_distance: int=6, # default value in CSD GOLD Python API
                  ):
         
         self.protein_path = protein_path
@@ -41,6 +42,7 @@ class GOLDDocker() :
         self.experiment_id = experiment_id
         self.output_dir = os.path.abspath(output_dir)
         self.prepare_protein = prepare_protein
+        self.binding_site_distance = binding_site_distance
         
         if not os.path.exists(self.output_dir) :
             os.mkdir(self.output_dir)
@@ -87,8 +89,6 @@ class GOLDDocker() :
             
         else :
             self.settings.add_protein_file(protein_path)
-                
-        self.settings.reference_ligand_file = native_ligand_path
         
         docker_output_dir = os.path.join(self.output_dir, 
                                          self.experiment_id)
@@ -100,7 +100,8 @@ class GOLDDocker() :
         self.protein = self.settings.proteins[0]
         self.native_ligand = MoleculeReader(self.native_ligand_path)[0]
         bs = self.settings.BindingSiteFromLigand(protein=self.protein, 
-                                                 ligand=self.native_ligand)
+                                                 ligand=self.native_ligand,
+                                                 distance=self.binding_site_distance)
         self.settings.binding_site = bs
             
         self.docked_ligand_name = 'docked_ligands.mol2'
@@ -191,6 +192,7 @@ class GOLDDocker() :
                 raise FailedGOLDDockingException()
             runtime = time.time() - start_time
             
+            # remove useless files (duplicates of output poses)
             for filename in os.listdir(mol_output_dir) :
                 if 'ligand_' in filename :
                     os.remove(os.path.join(mol_output_dir, filename))

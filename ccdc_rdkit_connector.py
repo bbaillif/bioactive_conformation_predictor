@@ -72,7 +72,7 @@ class CcdcRdkitConnector() :
                                for atom in ccdc_mol.atoms 
                                if atom.atomic_number < 1])
         mol2block = ccdc_mol.to_string()
-        return Chem.MolFromMol2Block(mol2block)
+        return Chem.MolFromMol2Block(mol2block, removeHs=False)
     
     def ccdc_mols_to_rdkit_mol_conformers(self, ccdc_mols, rdkit_mol) :
         """Add conformers to the rdkit_mol in place

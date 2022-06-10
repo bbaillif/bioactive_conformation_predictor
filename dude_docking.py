@@ -235,10 +235,10 @@ class DUDEDocking() :
         docked_dirs = os.listdir(dude_docking_dir)
         active_dirs = [os.path.join(dude_docking_dir, d)
                        for d in docked_dirs 
-                       if 'active' in d]
+                       if 'active' in d][:50]
         decoy_dirs = [os.path.join(dude_docking_dir, d) 
                       for d in docked_dirs 
-                      if 'decoy' in d]
+                      if 'decoy' in d][:2500]
         
         for active_dir in tqdm(active_dirs) :
             max_scores = self.evaluate_molecule(directory=active_dir)
@@ -406,39 +406,13 @@ if __name__ == '__main__':
     else :
         targets = [args.target]
         
-    targets = ['cp3a4']
+    targets = ['nos1']
     for target in targets :
         dude_docking = DUDEDocking(target=target,
                                    rigid_docking=True)
         dude_docking.dock_pool()
         dude_docking.ef_analysis()
-        dude_docking = DUDEDocking(target=target,
-                                   rigid_docking=False)
-        dude_docking.dock_pool()
-        dude_docking.ef_analysis()
-        
-    # targets = ['jak2']
-    # for target in targets :
-        # dude_docking = DUDEDocking(target=target,
-        #                            rigid_docking=True)
-        # dude_docking.dock_pool()
-        # dude_docking.ef_analysis()
         # dude_docking = DUDEDocking(target=target,
         #                            rigid_docking=False)
         # dude_docking.dock_pool()
         # dude_docking.ef_analysis()
-    
-# TODO : iterate over targets
-# TODO : store results in jsons for each target
-    
-# JAK2
-# model ef5 = 6.34 bedroc = 0.36
-# energy 5.12 0.30
-# score 6.21 0.35
-# random 5.54 0.28
-
-# DRD3
-# model ef5 = 1.44 bedroc 0.18
-# energy 1.91 bedroc 0.19
-# score 1.43 0.18
-# random 2.07 0.20

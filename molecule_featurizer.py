@@ -47,9 +47,11 @@ class MoleculeFeaturizer() :
         edge_attr = edge_attr[perm]
         
         # Make one data per conformer, because it has different positions
-        for conf_id, conf in enumerate(rdkit_mol.GetConformers()) :
+        confs = [conf for conf in rdkit_mol.GetConformers()]
+        for i, conf in enumerate(confs) : # i can be different than conf_id, i.e. if confs have been removed for a mol
+            conf_id = conf.GetId()
             if mol_ids :
-                mol_id = mol_ids[conf_id]
+                mol_id = mol_ids[i]
             else :
                 mol_id = Chem.MolToSmiles(rdkit_mol)
             data = self.conf_to_data(rdkit_mol=rdkit_mol, 
@@ -140,7 +142,9 @@ class MoleculeFeaturizer() :
     
     def get_bioactive_rmsds(self, rdkit_mol, rmsd_func='ccdc') :
         
-        bioactive_conf_ids = [conf.GetId() for conf in rdkit_mol.GetConformers() if not conf.HasProp('Generator')]
+        bioactive_conf_ids = [conf.GetId() 
+                              for conf in rdkit_mol.GetConformers() 
+                              if not conf.HasProp('Generator')]
         
         rmsds = []
         for conf in rdkit_mol.GetConformers() :
