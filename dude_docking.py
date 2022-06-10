@@ -1,3 +1,4 @@
+from multiprocessing.spawn import prepare
 import os
 from re import sub
 import sys
@@ -153,7 +154,8 @@ class DUDEDocking() :
             self.gold_docker = GOLDDocker(protein_path=self.protein_path,
                                         native_ligand_path=self.ligand_path,
                                         output_dir='/hdd/gold_docking_dude',
-                                        experiment_id=self.experiment_id) 
+                                        experiment_id=self.experiment_id,
+                                        prepare_protein=True)
             results = self.gold_docker.dock_molecules(ccdc_mols=ccdc_mols,
                                                     mol_id=mol_id,
                                                     n_poses=n_poses,
