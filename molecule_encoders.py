@@ -1,6 +1,7 @@
 import unittest
 import pickle
 import os
+import numpy as np
 
 from rdkit import Chem
 from rdkit.Chem.rdchem import (
@@ -38,7 +39,16 @@ class MoleculeEncoders(object) :
     
     def create_encoders(self, 
                         conf_ensemble_library: ConfEnsembleLibrary) :
-        all_function_names = self.encoded_atom_function_names + self.encoded_bond_function_names + self.encoded_ring_function_names
+        """
+        Create one hot encoders for all listed function names in the object,
+        and store them in self.encoders dict
+        :param conf_ensemble_library: library
+        :type conf_ensemble_library: ConfEnsembleLibrary
+        
+        """
+        all_function_names = self.encoded_atom_function_names \
+            + self.encoded_bond_function_names \
+            + self.encoded_ring_function_names
         for function_name in tqdm(all_function_names) :
             self.create_one_hot_encoder(function_name=function_name, 
                                         conf_ensemble_library=conf_ensemble_library)
@@ -46,22 +56,69 @@ class MoleculeEncoders(object) :
     def create_one_hot_encoder(self, 
                                function_name: str, 
                                conf_ensemble_library: ConfEnsembleLibrary) :
+        """
+        Create a one hot encoder for the function, stored in self.encoders dict
+        
+        :param function_name: Name of the rdkit function used to create encoder
+        :type function_name: str
+        :param conf_ensemble_library: library
+        :type conf_ensemble_library: ConfEnsembleLibrary
+        
+        """
+        
         function = eval(function_name)
         values = self.get_all_function_values_in_library(function_name=function_name,
-                                                                conf_ensemble_library=conf_ensemble_library)
+                                                         conf_ensemble_library=conf_ensemble_library)
         self.encoders[function_name] = OneHotEncoder(sparse=False).fit([[value] for value in values])
     
-    def encode(self, value, function_name: str) :
+    def encode(self, 
+               value, 
+               function_name: str) :
+        """
+        Use the stored encoders to one hot encode a given value for a function
+        
+        :param value: value to encode
+        :param function_name: Name of the rdkit function used to produce value
+        :type function_name: str
+        
+        """
         return self.encoders[function_name].transform([value])
     
-    def __getitem__(self, function_name: str) :
-        assert function_name in self.encoders, 'The function you are asking is not encoded, please use create_one_hot_encoder'
+    def __getitem__(self, 
+                    function_name: str) -> OneHotEncoder:
+        assert function_name in self.encoders, \
+            'The function you are asking is not encoded, please use create_one_hot_encoder'
         return self.encoders[function_name]
     
-    def get_encoder_categories(self, function_name: str) :
+    def get_encoder_categories(self, 
+                               function_name: str) -> np.ndarray:
+        """
+        Return the possible categories of the given function encoder
+        
+        :param function_name: Name of the encoded rdkit function
+        :type function_name: str
+        :return: Array of categories, corresponding to columns of the one hot
+        :rtype: np.ndarray
+        
+        """
         return self.encoders[function_name].categories_
     
-    def get_all_function_values_in_library(self, function_name: str, conf_ensemble_library: ConfEnsembleLibrary) :
+    def get_all_function_values_in_library(self, 
+                                           function_name: str, 
+                                           conf_ensemble_library: ConfEnsembleLibrary
+                                           ) -> list :
+        """
+        Get all the values possible for a function, scanning all molecules
+        in the library
+        
+        :param function_name: Name of the encoded rdkit function
+        :type function_name: str
+        :param conf_ensemble_library: library
+        :type conf_ensemble_library: ConfEnsembleLibrary
+        :return: list of all values that the function can return
+        :rtype: list
+        
+        """
         function = eval(function_name)
         values = []
         for smiles, conf_ensemble in conf_ensemble_library.get_unique_molecules() :
@@ -74,12 +131,28 @@ class MoleculeEncoders(object) :
                 values.extend([function(ring_info, atom_idx) for atom_idx, atom in enumerate(conf_ensemble.mol.GetAtoms())])
         return values
     
-    def save(self, path) :
+    def save(self, path: str) :
+        """
+        Saves the object using pickle
+        
+        :param path: path to file
+        :type path: str
+        
+        """
         with open(path, 'wb') as f:
             pickle.dump(self, f)
             
-    @staticmethod
-    def load(path) :
+    @classmethod
+    def from_file(cls, path: str) -> 'MoleculeEncoders':
+        """
+        Creates a MoleculeEncoders from a file
+        
+        :param path: path to file
+        :type path: str
+        :return: MoleculeEncoders
+        :rtype: MoleculeEncoders
+        
+        """
         with open(path, 'rb') as f:
             return pickle.load(f)
     

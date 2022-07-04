@@ -105,6 +105,8 @@ class GOLDDocker() :
         self.settings.binding_site = bs
             
         self.docked_ligand_name = 'docked_ligands.mol2'
+        # self.docked_ligand_name = 'docked_ligands.sdf'
+        # self.settings.output_format = 'sdf'
 
     def dock_molecule(self, 
                       ccdc_mol: Molecule,
@@ -196,6 +198,14 @@ class GOLDDocker() :
             for filename in os.listdir(mol_output_dir) :
                 if 'ligand_' in filename :
                     os.remove(os.path.join(mol_output_dir, filename))
+                    
+            # correct sdf file, as the @<TRIPOS>COMMENT makes the property
+            # unreadable by RDKit
+            with open(self.settings.output_file, 'r') as f :
+                data = f.read()
+            data = data.replace('@<TRIPOS>COMMENT', '')
+            with open(self.settings.output_file, 'w') as f :
+                f.write(data)
             
         else :
             print(poses_output_file, ' already exists')

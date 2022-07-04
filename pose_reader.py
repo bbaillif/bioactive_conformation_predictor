@@ -6,9 +6,14 @@ class PoseReader() :
     def __init__(self, 
                  file_path) :
         
-        assert file_path.endswith('.mol2')
         self.file_path = file_path
-        self.mols = self.mols_from_mol2_file(self.file_path)
+        self.file_format = file_path.split('.')[-1]
+        assert self.file_format in ['mol2', 'sdf']
+        
+        if self.file_format == 'mol2' :
+            self.mols = self.mols_from_mol2_file(self.file_path)
+        elif self.file_format == 'sdf' :
+            self.mols = self.mols_from_sdf(self.file_path)
         
     def mol2_block_to_mol(self, mol2_block) :
         props = defaultdict(list)
@@ -51,6 +56,12 @@ class PoseReader() :
         mol = self.mol2_block_to_mol(mol2_block)
         mols.append(mol)
         #mol2_block = []
+        return mols
+    
+    def mols_from_sdf(self,
+                      file_path: str) :
+        sd_supplier = Chem.SDMolSupplier(file_path)
+        mols = [mol for mol in sd_supplier]
         return mols
     
     def __iter__(self):

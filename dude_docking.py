@@ -1,4 +1,3 @@
-from multiprocessing.spawn import prepare
 import os
 from re import sub
 import sys
@@ -13,7 +12,7 @@ from rdkit.ML.Scoring.Scoring import CalcEnrichment, CalcBEDROC
 from ccdc.io import MoleculeReader
 from ccdc.conformer import ConformerGenerator
 from molecule_featurizer import MoleculeFeaturizer
-from litschnet import LitSchNet
+from bioschnet import BioSchNet
 from gold_docker import GOLDDocker
 from pose_reader import PoseReader
 from pose_selector import (IdentityPoseSelector, Pose,
@@ -38,7 +37,7 @@ class DUDEDocking() :
     
     def __init__(self,
                  target: str='jak2',
-                 dude_dir: str='/home/benoit/DUD-E/all',
+                 dude_dir: str='/home/bb596/hdd/DUD-E/all',
                  rigid_docking: bool=False,
                  use_selector_scoring: bool=False):
         
@@ -81,7 +80,7 @@ class DUDEDocking() :
         
         self.gold_docker = GOLDDocker(protein_path=self.protein_path,
                                       native_ligand_path=self.ligand_path,
-                                      output_dir='/hdd/gold_docking_dude',
+                                      output_dir='/home/bb596/hdd/gold_docking_dude',
                                       experiment_id=self.experiment_id)
         
         for mol_id, ccdc_mol in zip(mol_ids, all_mols) :
@@ -96,11 +95,12 @@ class DUDEDocking() :
                 print(f'Docking failed for {mol_id}')
                 
                 
-    def dock_pool(self, max_n_actives=50) :
+    def dock_pool(self, max_f_actives=0.8) :
         
         active_mols_reader = MoleculeReader(self.actives_path)
-        active_mols = [mol for mol in active_mols_reader][:max_n_actives]
-        n_actives = len(active_mols)
+        active_mols = [mol for mol in active_mols_reader]
+        n_actives = int(len(active_mols) * max_f_actives)
+        active_mols = active_mols[:n_actives]
         active_mol_ids = [f'active_{i}' for i in range(n_actives)]
         
         decoy_mols_reader = MoleculeReader(self.decoys_path)
@@ -153,9 +153,8 @@ class DUDEDocking() :
             
             self.gold_docker = GOLDDocker(protein_path=self.protein_path,
                                         native_ligand_path=self.ligand_path,
-                                        output_dir='/hdd/gold_docking_dude',
-                                        experiment_id=self.experiment_id,
-                                        prepare_protein=True)
+                                        output_dir='/home/bb596/hdd/gold_docking_dude',
+                                        experiment_id=self.experiment_id) 
             results = self.gold_docker.dock_molecules(ccdc_mols=ccdc_mols,
                                                     mol_id=mol_id,
                                                     n_poses=n_poses,
@@ -182,7 +181,7 @@ class DUDEDocking() :
     def generate_conformers_for_molecule(self,
                                          ccdc_mol) :
         conf_generator = ConformerGenerator()
-        conf_generator.settings.max_conformers = 100
+        conf_generator.settings.max_conformers = 250
         conformers = conf_generator.generate(ccdc_mol)
         return [conf.molecule for conf in conformers]
            
@@ -197,7 +196,7 @@ class DUDEDocking() :
         
         self.gold_docker = GOLDDocker(protein_path=self.protein_path,
                                       native_ligand_path=self.ligand_path,
-                                      output_dir='/hdd/gold_docking_dude',
+                                      output_dir='/home/bb596/hdd/gold_docking_dude',
                                       experiment_id=self.experiment_id)
         self.mol_featurizer = MoleculeFeaturizer()
         
@@ -214,7 +213,7 @@ class DUDEDocking() :
             model_checkpoint_name = os.listdir(model_checkpoint_dir)[0]
             model_checkpoint_path = os.path.join(model_checkpoint_dir,
                                                  model_checkpoint_name)
-            model = LitSchNet.load_from_checkpoint(model_checkpoint_path)
+            model = BioSchNet.load_from_checkpoint(model_checkpoint_path)
             model.eval()
             
             if use_cuda and torch.cuda.is_available() :
@@ -237,10 +236,10 @@ class DUDEDocking() :
         docked_dirs = os.listdir(dude_docking_dir)
         active_dirs = [os.path.join(dude_docking_dir, d)
                        for d in docked_dirs 
-                       if 'active' in d][:50]
+                       if 'active' in d]
         decoy_dirs = [os.path.join(dude_docking_dir, d) 
                       for d in docked_dirs 
-                      if 'decoy' in d][:2500]
+                      if 'decoy' in d]
         
         for active_dir in tqdm(active_dirs) :
             max_scores = self.evaluate_molecule(directory=active_dir)
@@ -319,26 +318,24 @@ class DUDEDocking() :
         max_scores = {}
         poses = self.get_poses(directory=directory)
         if poses :
-            included = True
             for selector_name, pose_selector in self.pose_selectors.items() :
                 ranked_poses = pose_selector.select_poses(poses)
-                if ranked_poses and included :
+                if ranked_poses :
                     max_scores[selector_name] = {}
                     n_poses = len(ranked_poses)
+                    scores = [pose.fitness() 
+                              for pose in ranked_poses]
                     for percentage in range(1, 101) :
                         try :
                             n_conf = percentage * n_poses // 100
                             n_conf = max(1, n_conf) # avoid n_conf = 0 situation
-                            pose_subset = ranked_poses[:n_conf]
-                            subset_scores = [pose.fitness() 
-                                            for pose in pose_subset]
+                            subset_scores = scores[:n_conf]
                             max_score = np.max(subset_scores)
                             max_scores[selector_name][percentage] = max_score
                         except :
                             import pdb;pdb.set_trace()
                 else :
                     max_scores = None
-                    included = False
                     break
         else :
             max_scores = None
@@ -366,8 +363,9 @@ class DUDEDocking() :
             try :
                 poses_reader = PoseReader(docked_ligands_path)
                 poses = [Pose(pose) for pose in poses_reader]
-            except :
+            except Exception as e :
                 print(f'Reading poses failed for {docked_ligands_path}')
+                print(str(e))
         
         return poses
         
@@ -404,17 +402,17 @@ if __name__ == '__main__':
     args = parser.parse_args()
     
     if args.target == 'all' :
-        targets = os.listdir('/home/benoit/DUD-E/all')
+        targets = os.listdir('/home/bb596/hdd/DUD-E/all')
     else :
         targets = [args.target]
         
-    targets = ['nos1']
+    targets = ['jak2']
     for target in targets :
         dude_docking = DUDEDocking(target=target,
                                    rigid_docking=True)
         dude_docking.dock_pool()
         dude_docking.ef_analysis()
-        # dude_docking = DUDEDocking(target=target,
-        #                            rigid_docking=False)
-        # dude_docking.dock_pool()
+        dude_docking = DUDEDocking(target=target,
+                                   rigid_docking=False)
+        dude_docking.dock_pool()
         # dude_docking.ef_analysis()

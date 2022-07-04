@@ -3,10 +3,8 @@ import copy
 
 from typing import List
 from rdkit import Chem
-from rdkit.Chem.rdchem import Mol
+from rdkit.Chem.rdchem import Mol, Conformer
 from rdkit.Chem.rdDistGeom import EmbedMolecule, EmbedMultipleConfs
-
-from collections.abc import Iterator
 
 Chem.SetDefaultPickleProperties(Chem.PropertyPickleOptions.AllProps)
 
@@ -15,57 +13,36 @@ class ConfEnsemble(object) :
     """
     Class to store confs (conformations, also called conformers if low-energy) 
     from the same molecule in a single RDKit molecule
-    """
-    
-    def __init__(self, 
-                 mol: Mol=None, 
-                 mol_list: List[Mol]=None, 
-                 standardize_mols: bool=True,
-                 embed_hydrogens: bool=False) :
-        
-        """
-        Create a conf ensemble; wrapping a RDKit mol
-        Args:
+    Args:
             mol: Mol = RDKit molecule containing
             mol_list: List[Mol] = list of molecules of identical graph having
                 each one conformer
+            standardize_mols: bool = Can be disabled to win a bit of time if you
+                are sure of that the input molecules are the exact same
             embed_hydrogens: bool = Whether to include hydrogens in the 
                 molecules (hydrogens are predicted for bioactive conformations 
                 for instance)
-        """
+    """
+    
+    def __init__(self, 
+                 mol: Mol = None, 
+                 mol_list: List[Mol] = None, 
+                 standardize_mols: bool = True,
+                 embed_hydrogens: bool = False) :
         
         self.standardize_mols = standardize_mols
         self.embed_hydrogens = embed_hydrogens
-        if mol is not None :
-            if self.standardize_mols :
-                mol = self.standardize_mol(mol)
-            self.mol = mol
-        elif mol_list is not None :
-            
-            # if self.standardize_mols :
-            #     standardized_mol_list = [self.standardize_mol(mol) 
-            #                             for mol in mol_list]
-            # else :
-            #     standardized_mol_list = mol_list
-                
-            if len(mol_list) == 1 :
-                mol = mol_list[0]
-                if self.standardize_mol :
-                    mol = self.standardize_mol(mol=mol)
-                for conf in mol.GetConformers() : 
-                    for prop in mol.GetPropNames() :
-                        value = mol.GetProp(prop)
-                        conf.SetProp(prop, str(value))
-                self.mol = mol
-            else :
-                self.mol = self.mol_from_list(mol_list,
-                                              standardize_mol=self.standardize_mols)
+        if mol_list is not None : 
+            pass
+        elif mol is not None : # if no mol_list defined, create from single mol
+            mol_list = [mol]
         else :
             raise Exception('No input given')
         
+        self.mol = self.mol_from_list(mol_list)
+        
     def mol_from_list(self, 
-                      mol_list: List[Mol],
-                      standardize_mol: bool=True) :
+                      mol_list: List[Mol]) :
         
         """
         Groups conformations coming from a list of RDKit molecule to a single 
@@ -76,26 +53,18 @@ class ConfEnsemble(object) :
             master_mol: Mol = single molecule grouping all conformations from 
                 input list
         """
-        if standardize_mol :
-            standardized_mol_list = [self.standardize_mol(mol) for mol in mol_list]
-            self._check_input_ensemble(standardized_mol_list)
-        else :
-            standardized_mol_list = mol_list
         
-        #import pdb; pdb.set_trace()
+        mol_list = [self.copy_mol_props_to_confs(mol) for mol in mol_list]
         
-        for i, mol in enumerate(standardized_mol_list) :
+        if self.standardize_mols :
+            mol_list = [self.standardize_mol(mol) for mol in mol_list]
+            self._check_input_ensemble(mol_list)
+        
+        for i, mol in enumerate(mol_list) :
             if i == 0 :
                 master_mol = copy.deepcopy(mol)
-                conf = master_mol.GetConformer()
-                for prop in mol.GetPropNames() :
-                    value = mol.GetProp(prop)
-                    conf.SetProp(prop, str(value))
             else :
                 for conf in mol.GetConformers() : 
-                    for prop in mol.GetPropNames() :
-                        value = mol.GetProp(prop)
-                        conf.SetProp(prop, str(value))
                     new_conf_id = master_mol.AddConformer(conf, assignId=True)
             
         return master_mol
@@ -118,44 +87,52 @@ class ConfEnsemble(object) :
             mol = Chem.RemoveHs(mol)
         
         self._check_mol_has_conf(mol)
-        Chem.AssignAtomChiralTagsFromStructure(mol)
+        Chem.AssignStereochemistryFrom3D(mol)
         standard_mol = Chem.MolFromSmiles(Chem.MolToSmiles(mol))
         assert mol.GetNumAtoms() == standard_mol.GetNumAtoms()
+        
         for prop in mol.GetPropNames() :
             value = mol.GetProp(prop)
             standard_mol.SetProp(prop, str(value))
-            for conf in standard_mol.GetConformers() :
-                conf.SetProp(prop, str(value))
+            
         if self.embed_hydrogens :
             # MolFromSmiles is not embedding Hs by default
             standard_mol = Chem.AddHs(standard_mol, addCoords=True)
         else :
             self._check_mol_has_no_hydrogens(mol)
+            
         atom_map = mol.GetSubstructMatches(standard_mol)
         # atom_map[standard_mol_atom_idx] = mol_atom_idx
         
         # loop to correct atom ordering of positions
         mol_copy = copy.deepcopy(mol)
         for conf in mol_copy.GetConformers() :
-            #print(conf.GetPositions())
-            #print(atom_map)
             new_positions = conf.GetPositions()[atom_map]
-            #print(new_positions)
             for i, position in enumerate(new_positions) :
                 conf.SetAtomPosition(i, position)
-            #print(conf.GetPositions())
-            
-            for prop in mol.GetPropNames() :
-                value = mol.GetProp(prop)
-                conf.SetProp(prop, str(value))
-            
             new_conf_id = standard_mol.AddConformer(conf, assignId=True)
         
         return standard_mol
         
+    def copy_mol_props_to_confs(self,
+                                mol: Mol) -> Mol :
+        """
+        Copy RDKit molecule properties into its conformers
+        Args: 
+            mol: Mol = input molecule
+        Returns:
+            Mol = same molecule but with all confs having the same properties
+                as input molecule
+        """
+        for prop in mol.GetPropNames() :
+            value = mol.GetProp(prop)
+            for conf in mol.GetConformers() :
+                conf.SetProp(prop, str(value))
+        return mol
+        
     def add_confs_from_mol(self, 
                            mol: Mol,
-                           standardize_mol: bool=True) :
+                           standardize=True) :
         
         """
         Add conformations to the existing RDKit Mol using a single RDKit Mol 
@@ -166,10 +143,10 @@ class ConfEnsemble(object) :
             conf_ids: List = list of confId in the stored RDKit Mol 
                 corresponding to conformations added
         """
-        if standardize_mol :
+        if self.standardize_mols and standardize :
             mol = self.standardize_mol(mol)
         
-        self._check_conf(mol)
+        self._check_mol_is_same(mol)
         
         conf_ids = []
         for conf in mol.GetConformers() :
@@ -177,7 +154,8 @@ class ConfEnsemble(object) :
             
         return conf_ids
         
-    def add_confs_from_mol_list(self, mol_list: List[Mol]=None) :
+    def add_confs_from_mol_list(self, 
+                                mol_list: List[Mol]) :
         
         """
         Add conformations to the existing RDKit Mol from a list of RDKit Mol 
@@ -190,19 +168,22 @@ class ConfEnsemble(object) :
                 corresponding to conformations added
         """
         
-        standardized_mol_list = [self.standardize_mol(mol) for mol in mol_list]
-        self._check_input_ensemble(standardized_mol_list)
+        if self.standardize_mols :
+            mol_list = [self.standardize_mol(mol) for mol in mol_list]
+            self._check_input_ensemble(mol_list)
         
         conf_ids = []
-        for mol in standardized_mol_list :
-            conf_ids = conf_ids + self.add_confs_from_mol(mol)
+        for mol in mol_list :
+            conf_ids = conf_ids + self.add_confs_from_mol(mol,
+                                                          standardize=False)
             
         return conf_ids
         
     def get_num_confs(self) :
         return self.mol.GetNumConformers()
     
-    def get_conf_positions(self, conf_id: int=0) :
+    def get_conf_positions(self, 
+                           conf_id: int = 0) :
         
         """
         Args :
@@ -214,7 +195,8 @@ class ConfEnsemble(object) :
         
         return self.mol.GetConformer(conf_id).GetPositions()
         
-    def _check_input_ensemble(self, mol_list: List[Mol]) :
+    def _check_input_ensemble(self, 
+                              mol_list: List[Mol]) :
         
         """
         Checks if the molecules from the input ensemble are all the same
@@ -232,25 +214,30 @@ class ConfEnsemble(object) :
         assert all([mol.GetNumConformers() > 0 for mol in mol_list]), \
             'All molecules in the input should have at least one conformation'
         
-    def _check_conf(self, mol: Mol) :
+    def _check_mol_is_same(self, 
+                           mol: Mol) :
         
         """
         Checks if the input molecule is the same as the stored molecule
         Args :
             mol: Mol = input molecule
         """
-        Chem.AssignAtomChiralTagsFromStructure(mol)
-        Chem.AssignAtomChiralTagsFromStructure(self.mol)
+        # Chem.AssignAtomChiralTagsFromStructure(mol)
+        # Chem.AssignAtomChiralTagsFromStructure(self.mol)
         input_smiles = Chem.MolToSmiles(mol)
         ensemble_smiles = Chem.MolToSmiles(self.mol)
         assert input_smiles == ensemble_smiles, \
         f"""Molecule {input_smiles} from input conformation is different 
         to molecule {ensemble_smiles} from the ensemble"""
             
-    def _check_mol_has_conf(self, mol) :
+    def _check_mol_has_conf(self, 
+                            mol: Mol) :
+        
         assert mol.GetNumConformers(), 'Input molecule has no conf'
         
-    def _check_mol_has_no_hydrogens(self, mol) :
+    def _check_mol_has_no_hydrogens(self, 
+                                    mol: Mol) :
+        
         atom_symbols = [atom.GetSymbol() for atom in mol.GetAtoms()]
         assert 'H' not in atom_symbols, \
         """Input molecule has hydrogens, that are not embeded by the current 

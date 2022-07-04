@@ -5,9 +5,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 import os
-import copy
 import pickle
 
+from torch.utils.data import Dataset
 from rdkit import Chem
 from rdkit.Chem import AllChem
 from torch_geometric.loader import DataLoader
@@ -16,7 +16,7 @@ from rdkit.Chem.rdMolDescriptors import CalcNumRotatableBonds
 from sklearn.metrics import r2_score, mean_squared_error
 from tqdm import tqdm
 from collections import defaultdict
-from litschnet import LitSchNet
+from bioschnet import BioSchNet
 from molsize_model import MolSizeModel
 from rdkit.ML.Scoring.Scoring import CalcBEDROC, CalcEnrichment
 from scipy.stats import pearsonr, spearmanr
@@ -24,13 +24,13 @@ from scipy.stats import pearsonr, spearmanr
 class RMSDPredictorEvaluator() :
     
     def __init__(self, 
-                 model: LitSchNet, 
+                 model: BioSchNet, 
                  evaluation_name: str,
-                 results_dir: str='results/', 
-                 bioactive_threshold: float=1.0,
-                 show_individual_scatterplot: bool=False,
-                 training_smiles: list=None,
-                 training_pdb_ids: list=None) :
+                 results_dir: str = '/home/bb596/hdd/pdbbind_bioactive/results/', 
+                 bioactive_threshold: float = 1.0,
+                 show_individual_scatterplot: bool = False,
+                 training_smiles: list = None,
+                 training_pdb_ids: list = None) :
         
         self.model = model
         self.evaluation_name = evaluation_name
@@ -70,8 +70,8 @@ class RMSDPredictorEvaluator() :
         self.dataset_results = {}
     
     def evaluate(self, 
-                 dataset,
-                 overwrite=False) :
+                 dataset: Dataset,
+                 overwrite: bool = False) :
         
         if len(self.training_smiles) :
             print('Computing training set fingerprints')
@@ -108,15 +108,15 @@ class RMSDPredictorEvaluator() :
         
         
     def get_included_smiles(self, 
-                            task: str='all') :
+                            task: str = 'all') :
         # Define if the molecule will be included in dataset evaluation based on task
         included_smiles = []
         
         for smiles, mol_results in self.mol_results.items() :
             n_generated = mol_results['n_generated']
             has_generated = n_generated > 1
-            is_easy = n_generated < 100
-            is_hard = n_generated == 100
+            is_easy = n_generated < 250
+            is_hard = n_generated == 250
             task_filter = (task == 'all') or (task == 'hard' and is_hard) or (task == 'easy' and is_easy)
             include_smiles = task_filter and has_generated
             if include_smiles :
@@ -432,9 +432,11 @@ class RMSDPredictorEvaluator() :
             ranks = rankers_ranks[ranker]
             df = pd.DataFrame({xlabel : ranks})
             df['Ranker'] = ranker
-            master_df = pd.concat([master_df, df])
+            master_df = pd.concat([master_df, df], ignore_index=True)
         
         master_df['Ranker'] = master_df['Ranker'].replace(self.clean_ranker_names)
+        
+        # import pdb; pdb.set_trace()
         
         with sns.plotting_context('talk', font_scale=0.7) :
             sns.ecdfplot(data=master_df, x=xlabel, hue='Ranker')
@@ -606,6 +608,7 @@ class RMSDPredictorEvaluator() :
         df = self.similarity_bins(sims=max_sims,
                                   values=losses)
         df.columns = [xlabel, ylabel]
+        
         with sns.plotting_context('talk', font_scale=0.7) :
             boxplot = sns.boxplot(data=df, 
                         x=xlabel, 

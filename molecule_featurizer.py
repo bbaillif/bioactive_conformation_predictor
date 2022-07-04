@@ -1,8 +1,10 @@
+from typing import Sequence, List, Tuple
 import unittest
 import torch
 import copy
 
 from rdkit import Chem
+from rdkit.Chem.rdchem import Mol
 from rdkit.Chem.rdDistGeom import EmbedMultipleConfs
 from rdkit.Chem.rdMolAlign import GetBestRMS
 from rdkit.Chem import AllChem #needed for rdForceFieldHelpers
@@ -16,21 +18,40 @@ from ccdc.descriptors import MolecularDescriptors
 
     
 class MoleculeFeaturizer() :
+    """
+    Class to transform a molecule into a data point in torch geometric
+    Inspired from the QM9 dataset from torch geometric
+    """
     
     def __init__(self) :
         self.ccdc_rdkit_connector = CcdcRdkitConnector()
         
     def featurize_mol(self, 
-                      rdkit_mol, 
-                      mol_ids=None,
-                      exclude_hydrogens=True) :
+                      rdkit_mol: Mol, 
+                      mol_ids: Sequence = None,
+                      embed_hydrogens: bool = False) -> List[Data]:
+        """
+        Transforms all the conformations in the molecule into a list of torch
+        geometric data
+        
+        :param rdkit_mol: Input molecule containing conformations to featurize
+        :type rdkit_mol: Mol
+        :param mol_ids: List of identifiers to give each conformation. Length
+            must be the same as the number of conformations in the molecule
+        :type mol_ids: Sequence
+        :param embed_hydrogens: Whether to include the hydrogens in the data
+        :type embed_hydrogens: bool
+        :return: list of data, one for each conformation
+        :rtype: List[Data]
+        
+        """
         
         if mol_ids :
             assert len(mol_ids) == rdkit_mol.GetNumConformers()
         
         data_list = []
         
-        if exclude_hydrogens :
+        if embed_hydrogens :
             rdkit_mol = Chem.RemoveHs(rdkit_mol)
         
         x = self.encode_atom_features(rdkit_mol)
@@ -39,7 +60,8 @@ class MoleculeFeaturizer() :
         # Directed graph to undirected
         row, col = row + col, col + row
         edge_index = torch.tensor([row, col])
-        edge_attr = torch.tensor(mol_bond_features + mol_bond_features, dtype=torch.float32)
+        edge_attr = torch.tensor(mol_bond_features + mol_bond_features, 
+                                 dtype=torch.float32)
 
         # Sort the edge by source node idx
         perm = (edge_index[0] * rdkit_mol.GetNumAtoms() + edge_index[1]).argsort()
@@ -48,7 +70,8 @@ class MoleculeFeaturizer() :
         
         # Make one data per conformer, because it has different positions
         confs = [conf for conf in rdkit_mol.GetConformers()]
-        for i, conf in enumerate(confs) : # i can be different than conf_id, i.e. if confs have been removed for a mol
+        for i, conf in enumerate(confs) : 
+            # i can be different than conf_id, i.e. if confs have been removed for a mol
             conf_id = conf.GetId()
             if mol_ids :
                 mol_id = mol_ids[i]
@@ -64,18 +87,39 @@ class MoleculeFeaturizer() :
             
         return data_list
     
-    def encode_atom_features(self, rdkit_mol) :
+    def encode_atom_features(self, 
+                             rdkit_mol: Mol) -> torch.tensor :
+        """
+        Encode the atom features, here only the atomic number (can be modified)
+        
+        :param rdkit_mol: input molecule
+        :type rdkit_mol: Mol
+        :return: tensor (n_atoms, 1) storing the atomic numbers
+        :rtype: torch.tensor
+        
+        """
         
         mol_atom_features = []
         for atom_idx, atom in enumerate(rdkit_mol.GetAtoms()):
             atom_features = []
-            atom_features.append(atom.GetAtomicNum()) # Atomic number is both encoded as one hot and integer
+            atom_features.append(atom.GetAtomicNum())
             mol_atom_features.append(atom_features)
 
         x = torch.tensor(mol_atom_features, dtype=torch.float32)
         return x
     
-    def encode_bond_features(self, rdkit_mol) :
+    def encode_bond_features(self, 
+                             rdkit_mol: Mol) -> Tuple[list, List[int], List[int]] :
+        """
+        Encode the atom features, here none (can be modified)
+        
+        :param rdkit_mol: input molecule
+        :type rdkit_mol: Mol
+        :return: tuple storing an empty list, the list of starting atom in bonds
+        and the list of ending atom in bonds.
+        :rtype: Tuple[list, List[int], List[int]]
+        
+        """
         mol_bond_features = []
         row = []
         col = []
@@ -89,13 +133,38 @@ class MoleculeFeaturizer() :
         return mol_bond_features, row, col
     
     def conf_to_data(self, 
-                     rdkit_mol, 
-                     conf_id, 
-                     edge_index, 
-                     x=None, 
-                     edge_attr=None, 
-                     save_mol=False,
-                     mol_id=None) :
+                     rdkit_mol: Mol, 
+                     conf_id: int, 
+                     edge_index: torch.tensor, 
+                     x: torch.tensor = None, 
+                     edge_attr: torch.tensor = None, 
+                     save_mol: bool = False,
+                     mol_id: str = None) -> Data: 
+        """
+        Create a torch geometric Data from a conformation
+        
+        :param rdkit_mol: input molecule
+        :type rdkit_mol: Mol
+        :param conf_id: id of the conformation to featurize in the molecule
+        :type conf_id: int
+        :param edge_index: tensor (n_bonds, 2) containing the start and end of
+            each bond in the molecule
+        :type edge_index: torch.tensor
+        :param x: tensor containing the atomic numbers of each atom in the 
+            molecule
+        :type x: torch.tensor
+        :param edge_attr: tensor to store other atom features (not used)
+        :type edge_attr: torch.tensor
+        :param save_mol: if True, will save the rdkit molecule as mol_id (not
+            recommended, uses space)
+        :type save_mol: bool
+        :param mol_id: identifier of the conformation (saved in mol_id in Data)
+        :type mol_id: str
+        :return: single Data containing atomic numbers, positions and bonds for 
+            the input conformation
+        :rtype: Data
+        
+        """
         
         conf = rdkit_mol.GetConformer(conf_id)
         pos = torch.tensor(conf.GetPositions(), dtype=torch.float32)
@@ -140,11 +209,27 @@ class MoleculeFeaturizer() :
         
         return data
     
-    def get_bioactive_rmsds(self, rdkit_mol, rmsd_func='ccdc') :
+    def get_bioactive_rmsds(self, 
+                            rdkit_mol: Mol, 
+                            rmsd_func: str = 'ccdc') -> torch.tensor:
+        """
+        Compute the ARMSD to the closest bioactive conformation (they may be 
+        more than one) for each conformation in the molecule.
+        
+        :param rdkit_mol: input molecule
+        :type rdkit_mol: Mol
+        :param rmsd_func: backend used to compute the rmsd_func. Whether ccdc
+            (default) or rdkit
+        :type rmsd_func: str
+        :return: tensor containing the ARMSD for each conformation
+        :rtype: torch.tensor
+        
+        """
         
         bioactive_conf_ids = [conf.GetId() 
                               for conf in rdkit_mol.GetConformers() 
                               if not conf.HasProp('Generator')]
+        assert len(bioactive_conf_ids) > 0, 'There is no bioactive conformation'
         
         rmsds = []
         for conf in rdkit_mol.GetConformers() :
@@ -192,7 +277,8 @@ class MoleculeFeaturizerTest(unittest.TestCase):
     def test_featurize_mol(self):
         data_list = self.molecule_featurizer.featurize_mol(self.mol)
         self.assertEqual(self.mol.GetNumConformers(), len(data_list))
-        data_list = self.molecule_featurizer.featurize_mol(self.mol, exclude_hydrogens=False)
+        data_list = self.molecule_featurizer.featurize_mol(self.mol, 
+                                                           embed_hydrogens=True)
         
     def test_get_bioactive_rmsds(self) :
         data_list = self.molecule_featurizer.featurize_mol(self.mol)

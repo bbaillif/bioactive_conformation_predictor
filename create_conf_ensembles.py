@@ -22,11 +22,11 @@ Chem.SetDefaultPickleProperties(Chem.PropertyPickleOptions.AllProps)
 parser = argparse.ArgumentParser(description='Select data where conf ensembles will be created')
 parser.add_argument('--data_dir', 
                     type=str, 
-                    default='data/',
+                    default='/home/bb596/hdd/pdbbind_bioactive/data/',
                     help='directory where data are stored')
 parser.add_argument('--figures_dir', 
                     type=str,
-                    default='figures/',
+                    default='/home/bb596/hdd/pdbbind_bioactive/figures/',
                     help='where figures are stored')
 
 args = parser.parse_args()
@@ -36,7 +36,7 @@ figures_dir_path = args.figures_dir
 os.makedirs(os.path.join(data_dir_path, 'raw'), exist_ok=True)
 os.makedirs(figures_dir_path, exist_ok=True)
 
-pdbbind_processor = PDBBindMetadataProcessor()
+pdbbind_processor = PDBBindMetadataProcessor(root='/home/bb596/hdd/PDBBind/')
 pdbbind_mols = pdbbind_processor.get_molecules()
 pdbbind_CEL = ConfEnsembleLibrary.from_mol_list(pdbbind_mols)
 pdbbind_CEL_path = os.path.join(data_dir_path, 

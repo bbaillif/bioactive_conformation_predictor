@@ -10,7 +10,7 @@ from conf_ensemble_library import ConfEnsembleLibrary
 parser = argparse.ArgumentParser(description='Select data directory')
 parser.add_argument('--data_dir', 
                     type=str, 
-                    default='data/',
+                    default='/home/bb596/hdd/pdbbind_bioactive/data/',
                     help='directory where data are stored')
 args = parser.parse_args()
 data_dir_path = args.data_dir

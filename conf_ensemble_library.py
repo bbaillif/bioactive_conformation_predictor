@@ -4,30 +4,48 @@ import copy
 import unittest
 import pandas as pd
 
-from typing import List
+from typing import List, Dict, Tuple, Union
 from rdkit import Chem
 from rdkit.Chem.rdchem import Mol
 from rdkit.Chem.rdDistGeom import EmbedMolecule, EmbedMultipleConfs
 from rdkit.Chem.rdmolfiles import SDWriter, SDMolSupplier
 from ccdc_rdkit_connector import CcdcRdkitConnector
-from ccdc.conformer import ConformerGenerator
+from ccdc.conformer import ConformerGenerator, ConformerHitList
+from ccdc.io import Molecule
 from multiprocessing import Pool
 from tqdm import tqdm
 from conf_ensemble import ConfEnsemble
 
-class ConfEnsembleLibrary(object) :
-    
+# Could be more pythonic using MutableMapping ABC
+class ConfEnsembleLibrary() :
+    """
+    Class to store multiple ConfEnsemble in a dict where the 
+    smiles is the key.
+    The default behaviour is to create library of bioactive conformations,
+    then to generate conformations for these, and have a final library
+    containing bio+gen conformations
+    Args :
+        root: str = data directory to store the conf ensembles
+        conf_ensemble_dir: str = directory to store the bioactive conformer
+            ensemble
+        conf_ensemble_df_name: str = filename for the metadata csv file
+        gen_conf_ensemble_dir: str = directory to store the generated
+            conformers of molecules in the library (after generation)
+        merged_conf_ensemble_dir: str = directory to store the bioactive +
+            generated conf ensembles
+    """
+
     def __init__(self, 
-                 conf_ensemble_dir: str='data/conf_ensembles/',
+                 root: str='/home/bb596/hdd/pdbbind_bioactive/data/',
+                 conf_ensemble_dir: str='conf_ensembles/',
                  conf_ensemble_df_name: str='index.csv',
-                 gen_conf_ensemble_dir: str='data/gen_conf_ensembles/',
-                 merged_conf_ensemble_dir: str='data/all_conf_ensembles/',
-                 unique_file_ensemble_path: str='data/all_conf_ensembles.sdf') :
-        self.conf_ensemble_dir = conf_ensemble_dir
+                 gen_conf_ensemble_dir: str='gen_conf_ensembles/',
+                 merged_conf_ensemble_dir: str='all_conf_ensembles/') :
+        self.root = root
+        self.conf_ensemble_dir = os.path.join(self.root, conf_ensemble_dir)
         self.conf_ensemble_df_name = conf_ensemble_df_name
-        self.gen_conf_ensemble_dir = gen_conf_ensemble_dir
-        self.merged_conf_ensemble_dir = merged_conf_ensemble_dir
-        self.unique_file_ensemble_path = unique_file_ensemble_path
+        self.gen_conf_ensemble_dir = os.path.join(self.root, gen_conf_ensemble_dir)
+        self.merged_conf_ensemble_dir = os.path.join(self.root, merged_conf_ensemble_dir)
         
         if not os.path.exists(self.conf_ensemble_dir) :
             os.mkdir(self.conf_ensemble_dir)
@@ -45,34 +63,46 @@ class ConfEnsembleLibrary(object) :
     @classmethod
     def from_mol_list(cls,
                       mol_list: List[Mol],
-                      standardize_mols: bool=True) :
-        cel = cls()
+                      standardize: bool = True) :
+        """
+        Creates a library from a list of molecules
+        Args:
+            mol_list: List[Mol] = input molecules
+            standardize_mols: bool = whether to standardize the mol when
+                creating the conf ensembles
+        """
+        conf_ensemble_library = cls()
         print('Generating library')
         for mol in tqdm(mol_list) :
-            Chem.AssignAtomChiralTagsFromStructure(mol) # could be changed to AssignStereochemistryFrom3D
             smiles = Chem.MolToSmiles(mol)
             try :
-                if smiles in cel.library :
-                    cel.library[smiles].add_confs_from_mol(mol,
-                                                           standardize_mol=standardize_mols)
+                if smiles in conf_ensemble_library.library :
+                    conf_ensemble_library.library[smiles].add_confs_from_mol(mol,
+                                                                             standardize=standardize)
                 else :
-                    cel.library[smiles] = ConfEnsemble(mol=mol,
-                                                       standardize_mols=standardize_mols)
+                    conf_ensemble_library.library[smiles] = ConfEnsemble(mol=mol,
+                                                                         standardize_mols=standardize)
             except Exception as e :
                 print('Molecule failed')
                 print(str(e))
                 
-        return cel
+        return conf_ensemble_library
     
     
     @classmethod
     def from_dirs(cls,
-                  dir_pathes: list) :
+                  dir_pathes: List[str]) :
+        """
+        Creates a library from directories containing sdf files
+        Args: dir_pathes: List[str] = list of directories containing sdf files
+        
+        """
         print('Generating library')
         mol_list = []
         for dir_path in dir_pathes:
             file_names = os.listdir(dir_path)
             for file_name in file_names :
+                assert file_name.endswith('.sdf')
                 file_path = os.path.join(dir_path, file_name)
                 mol_list.extend([mol for mol in SDMolSupplier(file_path)])
         return cls.from_mol_list(mol_list=mol_list)
@@ -80,57 +110,65 @@ class ConfEnsembleLibrary(object) :
     @classmethod  
     def from_pickle(cls,
                     file_path: str) :
+        """
+        Creates a library from a pickle file storing a ConfEnsembleLibrary
+        Args:
+            file_path: str = path to the pickle file
+        """
         with open(file_path, 'rb') as f :
             cel = pickle.load(f) 
         return cel
                 
                 
-    def load(self, load_dir=None) :
-        if load_dir is None :
+    def load(self, 
+             library_name: str = 'bioactive') :
+        """
+        Load a existing library from one of the default directory
+        Args:
+            library_name: str = name of the library
+        """
+        if library_name == 'bioactive' :
             load_dir = self.conf_ensemble_dir
-        elif load_dir == 'merged' :
+        elif library_name == 'merged' :
             load_dir = self.merged_conf_ensemble_dir
-        elif load_dir == 'generated' :
+        elif library_name == 'generated' :
             load_dir = self.gen_conf_ensemble_dir
         self.load_metadata()
             
         for smiles, file_name in tqdm(self.table.values):
             try :
                 file_path = os.path.join(load_dir, file_name)
-                conf_ensemble = self.load_ensemble_from_file(file_path=file_path)
-                if smiles in self.library :
-                    self.library[smiles].add_confs_from_mol(mol=conf_ensemble.mol,
-                                                            standardize_mol=False)
-                else :
-                    self.library[smiles] = conf_ensemble
-                
-                # conf_ensemble = self.load_ensemble(file_path=file_path)
-                # basename, file_name = os.path.split(file_path)
-                # if subset == 'merged' :
-                #     gen_file_path = os.path.join(self.gen_conf_ensemble_dir,
-                #                                  file_name)
-                #     if os.path.exists(gen_file_path) :
-                #         gen_conf_ensemble = self.load_ensemble_from_file(file_path=gen_file_path)
-                #         conf_ensemble.add_confs_from_mol(mol=gen_conf_ensemble.mol,
-                #                                          standardize_mol=False)
-                # self.library[smiles] = conf_ensemble
+                conf_ensemble = self.get_ensemble_from_file(file_path=file_path)
+                self.library[smiles] = conf_ensemble
             except Exception as e :
                 print('Error with ' + file_path)
                 print(str(e))
                
                
     def load_metadata(self) :
+        """
+        Load default metatada (store in self.conf_ensemble_df_path)
+        """
         self.table = pd.read_csv(self.conf_ensemble_df_path, index_col=0)
                
                
-    def load_ensemble_from_smiles(self,
-                                 smiles,
-                                 load_dir=None) :
-        if load_dir is None :
+    def get_ensemble_from_smiles(self,
+                                 smiles: str,
+                                 library_name: str = 'bioactive'
+                                 ) -> ConfEnsemble:
+        """
+        Get ConfEnsemble for a smiles
+        Args:
+            smiles: str = SMILES to load
+            library_name: str = name of the library to extract the smiles from
+        Returns:
+            ConfEnsemble = ensemble for the SMILES
+        """
+        if library_name is None or library_name == 'bioactive' :
             load_dir = self.conf_ensemble_dir
-        elif load_dir == 'generated' :
+        elif library_name == 'generated' :
             load_dir = self.gen_conf_ensemble_dir
-        elif load_dir == 'merged' :
+        elif library_name == 'merged' :
             load_dir = self.merged_conf_ensemble_dir
             
         smiles_table = self.table[self.table['smiles'] == smiles]
@@ -138,13 +176,22 @@ class ConfEnsembleLibrary(object) :
             file_name = smiles_table['file_name'].values[0]
             file_path = os.path.join(load_dir,
                                      file_name)
-            return self.load_ensemble_from_file(file_path=file_path)
+            return self.get_ensemble_from_file(file_path=file_path)
         else :
             raise Exception('Smiles not in conf ensemble')
                
                
-    def load_ensemble_from_file(self, file_path):
+    def get_ensemble_from_file(self, 
+                               file_path: str) -> ConfEnsemble:
+        """
+        Get the ConfEnsemble from a sdf file
+        Args:
+            file_path: str = SDF file to a standardized conf ensemble
+        Returns:
+            ConfEnsemble = ensemble for the molecule in the SDF
+        """
         try :
+            assert file_path.endswith('.sdf')
             suppl = SDMolSupplier(file_path)
             return ConfEnsemble(mol_list=suppl,
                                 standardize_mols=False)
@@ -154,35 +201,45 @@ class ConfEnsembleLibrary(object) :
                
                 
     def save(self, 
-             save_dir=None,
-             save_table=True,
-             unique_file=False) :
-        if save_dir is None :
+             library_name: str = 'bioactive',
+             save_table: bool = True,
+             unique_filename: str = None) :
+        """
+        Save the library in SDF files in a directory by default; if 
+        unique_filename is given, then store in a single SDF
+        Args:
+            library_name: str = name of the library to save the data
+            save_table: bool = save the metadata in a CSV file
+            unique_filename: str = filename if the user decides to save the ensemble
+                in a single sdf file
+        """
+        if library_name == 'bioactive' :
             save_dir = self.conf_ensemble_dir
-        elif save_dir == 'merged' :
+        elif library_name == 'merged' :
             save_dir = self.merged_conf_ensemble_dir
         
-        if unique_file :
-            writer = SDWriter(self.unique_file_ensemble_path)
+        if unique_filename :
+            unique_filepath = os.path.join(self.root, unique_filename)
+            writer = SDWriter(unique_filepath)
         
         i = 0
-        for smiles, ce in tqdm(self.library.items()):
-            mol = ce.mol
+        for smiles, conf_ensemble in tqdm(self.library.items()):
+            mol = conf_ensemble.mol
             file_name = f'{i}.sdf'
-            if unique_file :
+            if unique_filepath :
                 self.save_confs_to_writer(rdkit_mol=mol,
                                           writer=writer)
             else :
                 writer_path = os.path.join(save_dir,
                                        file_name)
                 self.save_ensemble(rdkit_mol=mol,
-                                file_path=writer_path)
+                                   sd_writer_path=writer_path)
             row = pd.DataFrame([[smiles, file_name]], 
                                columns=self.table.columns)
             self.table = pd.concat([self.table, row], ignore_index=True)
             i = i + 1
             
-        if unique_file :
+        if unique_filepath :
             writer.close()
 
         if save_table :
@@ -190,31 +247,59 @@ class ConfEnsembleLibrary(object) :
 
 
     def save_ensemble(self,
-                      rdkit_mol,
-                      file_path) :
-        with SDWriter(file_path) as sd_writer :
+                      rdkit_mol: Mol,
+                      sd_writer_path: str) :
+        """
+        Save an ensemble (RDKit Mol with multiple confs) in given filepath
+        Args:
+            rdkit_mol: Mol = RDKit molecule containing multiple confs
+            sd_writer_path: str = SDF file path to store all confs for the molecule
+        """
+        with SDWriter(sd_writer_path) as sd_writer :
             self.save_confs_to_writer(rdkit_mol=rdkit_mol,
                                       writer=sd_writer)
 
 
     def save_confs_to_writer(self,
-                             rdkit_mol,
-                             writer) :
-        for conf in rdkit_mol.GetConformers() :
+                             rdkit_mol: Mol,
+                             writer: SDWriter) :
+        """
+        Save each conf of a RDKit mol as a single molecule in a SDF
+        Args:
+            rdkit_mol: Mol = input molecule
+            writer: SDWriter = to store each conf
+        """
+        mol = copy.deepcopy(rdkit_mol)
+        for conf in mol.GetConformers() :
             conf_id = conf.GetId()
+            # Store the conf properties as molecule properties to save them
             for prop in conf.GetPropNames() :
                 value = conf.GetProp(prop)
-                rdkit_mol.SetProp(prop, str(value))
-            writer.write(rdkit_mol, conf_id)
-            for prop in conf.GetPropNames() :
-                rdkit_mol.ClearProp(prop)
+                mol.SetProp(prop, str(value))
+            writer.write(mol, conf_id)
 
 
-    def get_num_molecules(self) :
+    def get_num_molecules(self) -> int:
+        """
+        Get the number of unique molecules in the library
+        Returns:
+            int = number of molecules
+        """
         return len(self.library)
     
     
-    def get_conf_ensemble(self, smiles, canonical_check=False) :
+    def get_conf_ensemble(self, 
+                          smiles: str, 
+                          canonical_check: bool = True) -> ConfEnsemble:
+        """
+        Get the conf ensemble for a given SMILES
+        Args:
+            smiles: str = input SMILES
+            canonical_check: bool = if True, will look for the canonical
+                smiles in the library
+        Returns:
+            ConfEnsemble = conf ensemble for the input SMILES
+        """
         if canonical_check :
             canon_smiles = Chem.MolToSmiles(Chem.MolFromSmiles(smiles))
             assert canon_smiles in self.library, \
@@ -222,22 +307,55 @@ class ConfEnsembleLibrary(object) :
         return self.library[smiles]
     
     
-    def get_unique_molecules(self) :
+    def get_unique_molecules(self) -> Dict[str, ConfEnsemble]:
+        """
+        Return the library as a dict
+        Returns :
+            Dict[str, ConfEnsemble] : mapping SMILES to corresponding conf 
+                ensemble
+        """
         return self.library.items()
     
     
-    def merge(self, second_library) :
-        new_cel = copy.deepcopy(self)
+    def merge(self, 
+              second_library: 'ConfEnsembleLibrary',
+              inplace: bool = False) -> Union['ConfEnsembleLibrary', None]:
+        """
+        Merge the current library with another input library
+        Args:
+            second_library: ConfEnsembleLibrary = second library to add
+                confs from
+            inplace: bool = if True, add the confs into current and return None,
+                else returns a library
+        Returns:
+            Union['ConfEnsembleLibrary', None]: None if inplace, else new 
+                library 
+        """
+        if not inplace :
+            conf_ensemble_library = copy.deepcopy(self)
+        else :
+            conf_ensemble_library = self
+            
         for smiles, conf_ensemble in second_library.get_unique_molecules() :
             mol = conf_ensemble.mol
             if smiles in self.library :
-                new_cel.library[smiles].add_confs_from_mol(mol)
+                conf_ensemble_library.library[smiles].add_confs_from_mol(mol)
             else :
-                new_cel.library[smiles] = ConfEnsemble(mol=mol)
-        return new_cel
+                conf_ensemble_library.library[smiles] = ConfEnsemble(mol=mol)
+                
+        if not inplace :
+            return conf_ensemble_library
+        else :
+            return None
     
     
-    def remove_smiles(self, smiles) :
+    def remove_smiles(self, 
+                      smiles: str) :
+        """
+        Remove smiles from library
+        Args:
+            smiles: str = SMILES to remove from library
+        """
         if smiles in self.library :
             self.library.pop(smiles)
         else :
@@ -245,7 +363,13 @@ class ConfEnsembleLibrary(object) :
         
         
     def generate_conf_pool(self, 
-                           included_smiles) :
+                           included_smiles: list) :
+        """
+        Uses multiprocessing to generate confs for a list of smiles in the 
+        library
+        Args:
+            included_smiles : list = SMILES to generate confs for
+        """
         params = []
     
         included_table = self.table[self.table['smiles'].isin(included_smiles)]
@@ -257,11 +381,19 @@ class ConfEnsembleLibrary(object) :
         with Pool(processes=12, maxtasksperchild=1) as pool :
             pool.map(self.generate_conf_thread, params)
             
-    def generate_conf_thread(self, params) :
+    def generate_conf_thread(self, 
+                             params: Tuple[str, str]) :
+        """
+        Thread for multiprocessing Pool to generate confs for a molecule using
+        the CCDC conformer generator. Default behaviour is to save all
+        generated confs in a dir, and initial+generated ensemble in a 'merged'
+        dir
+        Args:
+            params: Tuple[str, str] = SMILES and SDF file name of the molecule
+                to generate conformations for
+        """
         
         smiles, file_name = params
-        if file_name == '267.sdf' :
-            import pdb;pdb.set_trace()
         original_file_path = os.path.join(self.conf_ensemble_dir,
                                           file_name)
         try :
@@ -271,26 +403,25 @@ class ConfEnsembleLibrary(object) :
                                             file_name)
             if not os.path.exists(gen_file_path) :
                 print('Generating for ' + original_file_path)
-                conf_ensemble = self.load_ensemble_from_file(original_file_path)
+                conf_ensemble = self.get_ensemble_from_file(original_file_path)
                 rdkit_mol = conf_ensemble.mol
-                #import pdb;pdb.set_trace()
                 ccdc_mol = self.ccdc_rdkit_connector.rdkit_conf_to_ccdc_mol(rdkit_mol)
                 assert rdkit_mol.GetNumAtoms() == len(ccdc_mol.atoms)
                 
                 conformers = self.generate_conf_for_mol(ccdc_mol=ccdc_mol)
-                gen_rdkit_mol, generated_conf_ids = self.ccdc_rdkit_connector.ccdc_ensemble_to_rdkit_mol(ccdc_ensemble=conformers, 
-                                                                                                        rdkit_mol=rdkit_mol,
-                                                                                                        generated=True,
-                                                                                                        remove_input_conformers=True)
+                gen_rdkit_mol, _ = self.ccdc_rdkit_connector.ccdc_ensemble_to_rdkit_mol(ccdc_ensemble=conformers, 
+                                                                                        rdkit_mol=rdkit_mol,
+                                                                                        generated=True,
+                                                                                        remove_input_conformers=True)
                 self.save_ensemble(rdkit_mol=gen_rdkit_mol,
-                                   file_path=gen_file_path)
+                                   sd_writer_path=gen_file_path)
                 
                 merged_rdkit_mol = gen_rdkit_mol
                 for conf in rdkit_mol.GetConformers() :
                     merged_rdkit_mol.AddConformer(conf, 
                                                   assignId=True)
                 self.save_ensemble(rdkit_mol=merged_rdkit_mol,
-                                   file_path=merged_file_path)
+                                   sd_writer_path=merged_file_path)
                 
                 
         except Exception as e :
@@ -298,30 +429,22 @@ class ConfEnsembleLibrary(object) :
             print(str(e))
         
         
-    def generate_conf_for_mol(self, ccdc_mol) :
+    def generate_conf_for_mol(self, 
+                              ccdc_mol: Molecule,
+                              n_confs: int = 250) -> ConformerHitList:
+        """
+        Generate conformers for input molecule
+        Args:
+            ccdc_mol: Molecule = CCDC molecule to generate confs for
+            n_confs: int = maximum number of confs to generate
+        Returns:
+            ConformerHitList = confs for molecule
+        """
         conf_generator = ConformerGenerator()
-        conf_generator.settings.max_conformers = 100
+        conf_generator.settings.max_conformers = n_confs
         conformers = conf_generator.generate(ccdc_mol)
         return conformers
-        
-    # @classmethod
-    # def to_path(cls,
-    #             cel,
-    #             path: str='data/raw/ccdc_generated_conf_ensemble_library.p') :
-    #     with open(path, 'wb') as f :
-    #         pickle.dump(cel, f)
-    
-    # def save(self,
-    #          path: str='data/raw/ccdc_generated_conf_ensemble_library.p') :
-    #     with open(path, 'wb') as f :
-    #         pickle.dump(self, f)
-        
-    # @classmethod
-    # def from_path(cls, 
-    #               path: str='data/raw/ccdc_generated_conf_ensemble_library.p') :
-    #     with open(path, 'rb') as f:
-    #         conf_ensemble_library = pickle.load(f)
-    #     return conf_ensemble_library
+
     
 class ConfEnsembleLibraryTest(unittest.TestCase):
     
@@ -346,7 +469,7 @@ class ConfEnsembleLibraryTest(unittest.TestCase):
             mol = Chem.RemoveHs(mol)
             mol_list.append(mol)
             
-        conf_ensemble_library = ConfEnsembleLibrary(mol_list)
+        conf_ensemble_library = ConfEnsembleLibrary.from_mol_list(mol_list)
         self.assertEqual(conf_ensemble_library.get_num_molecules(), 2)
         self.assertEqual(conf_ensemble_library.get_conf_ensemble('CC(=O)Nc1ccc(O)cc1').get_num_confs(), 20)
         self.assertEqual(conf_ensemble_library.get_conf_ensemble('c1ccccc1').get_num_confs(), 10)

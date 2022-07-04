@@ -6,7 +6,9 @@ from torch import nn
 
 class MolSizeModel(pl.LightningModule) :
     
-    def __init__(self):
+    def __init__(self,
+                 batch_size: int=64):
+        self.batch_size = batch_size
         super().__init__()
         self.linear_layers = nn.Sequential(nn.Linear(2, 100),
                                            nn.LeakyReLU(),
@@ -22,7 +24,6 @@ class MolSizeModel(pl.LightningModule) :
         mol_size_descriptors = torch.cat([n_heavy_atoms.reshape((-1, 1)), 
                                           n_rotatable_bonds.reshape((-1, 1))],
                                          dim=1).float()
-        #import pdb;pdb.set_trace()
         pred = self.linear_layers(mol_size_descriptors)
         return pred
 
@@ -30,21 +31,21 @@ class MolSizeModel(pl.LightningModule) :
         pred = self.forward(batch)
         target = self._get_target(batch)
         loss = F.mse_loss(pred.squeeze(), target)
-        self.log("train_loss", loss)
+        self.log("train_loss", loss, batch_size=self.batch_size)
         return loss
     
     def validation_step(self, batch, batch_idx):
         pred = self.forward(batch)
         target = self._get_target(batch)
         loss = F.mse_loss(pred.squeeze(), target)
-        self.log("val_loss", loss)
+        self.log("val_loss", loss, batch_size=self.batch_size)
         return loss
     
     def test_step(self, batch, batch_idx):
         pred = self.forward(batch)
         target = self._get_target(batch)
         loss = F.mse_loss(pred.squeeze(), target)
-        self.log("test_loss", loss)
+        self.log("test_loss", loss, batch_size=self.batch_size)
         return loss
 
     def configure_optimizers(self):

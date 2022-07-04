@@ -20,7 +20,7 @@ from ccdc_rdkit_connector import CcdcRdkitConnector
 
 from collections import defaultdict
 from molecule_featurizer import MoleculeFeaturizer
-from litschnet import LitSchNet
+from bioschnet import BioSchNet
 from ccdc.descriptors import MolecularDescriptors
 from gold_docker import GOLDDocker
 from pose_selector import (IdentityPoseSelector, Pose, 
@@ -31,21 +31,20 @@ from pose_selector import (IdentityPoseSelector, Pose,
                            ModelPoseSelector)
 from pose_reader import PoseReader
 from multiprocessing import Pool, TimeoutError
+from data_split import MoleculeSplit, ProteinSplit
 
 class RigidDocking() :
     
     def __init__(self,
-                 output_dir_prefix: str='gold_docking_pdbbind',
+                 output_dir: str = '/home/bb596/hdd/gold_docking_pdbbind/',
+                 data_dir: str = '/home/bb596/hdd/pdbbind_bioactive/data/',
                  use_cuda: bool=False,
                  bioactive_rmsd_threshold: float=2):
 
-        self.output_dir = f'{output_dir_prefix}'
-
-        # self.output_dir = os.path.join('/media/benoit/New Volume/data/',
-        #                                self.output_dir)
-        self.output_dir = os.path.abspath(self.output_dir)
+        self.output_dir = os.path.abspath(output_dir)
         if not os.path.exists(self.output_dir) :
             os.mkdir(self.output_dir)
+        self.data_dir = data_dir
         self.use_cuda = use_cuda
         self.bioactive_rmsd_threshold = bioactive_rmsd_threshold
         
@@ -54,10 +53,10 @@ class RigidDocking() :
         self.flexible_mol_id = 'flexible_mol'
         self.rigid_mol_id = 'rigid_confs'
         
-        self.data_processor = PDBBindMetadataProcessor()
+        self.data_processor = PDBBindMetadataProcessor(root='/home/bb596/hdd/PDBBind')
         self.prepare_protein = False
             
-        self.smiles_df = pd.read_csv('data/smiles_df.csv')
+        self.smiles_df = pd.read_csv('/home/bb596/hdd/pdbbind_bioactive/data/smiles_df.csv')
         
     
     def get_test_pdb_ids(self,
@@ -66,21 +65,14 @@ class RigidDocking() :
         test_pdb_ids = []
         for split in splits :
             for split_i in split_is :
+                
                 if split == 'protein' :
-                    path = os.path.join('data/',
-                                        f'protein_similarity_splits',
-                                        f'test_pdb_protein_similarity_split_{split_i}.txt')
-                    with open(path, 'r') as f:
-                        pdb_ids = f.readlines()
-                        pdb_ids = [pdb.strip() for pdb in pdb_ids]
+                    data_split = ProteinSplit(split, split_i)
+                    pdb_ids = data_split.get_pdb_ids('test')
                     test_pdb_ids.extend(pdb_ids)
                 else :
-                    path = os.path.join('data/',
-                                        f'ligand_{split}_splits',
-                                        f'test_smiles_{split}_split_{split_i}.txt')
-                    with open(path, 'r') as f:
-                        test_smiles = f.readlines()
-                        test_smiles = [smiles.strip() for smiles in test_smiles]
+                    data_split = MoleculeSplit(split, split_i)
+                    test_smiles = data_split.get_smiles()
                     filtered_smiles_df = self.smiles_df[(self.smiles_df['smiles'].isin(test_smiles))
                                                         & (self.smiles_df['dataset'] == 'pdbbind')
                                                         & (self.smiles_df['included'])]
@@ -146,18 +138,23 @@ class RigidDocking() :
         cel = ConfEnsembleLibrary()
         cel.load_metadata()
         
-        already_done_ids = os.listdir(self.output_dir)
-        
         print('Prepare conformations for docking')
         for pdb_id in tqdm(test_pdb_ids) :
-            if not pdb_id in already_done_ids :
+            flexible_ligands_path = os.path.join(self.output_dir,
+                                                 pdb_id,
+                                                 'flexible_mol',
+                                                 'docked_ligands.mol2')
+            rigid_ligands_path = os.path.join(self.output_dir,
+                                                 pdb_id,
+                                                 'rigid_confs',
+                                                 'docked_ligands.mol2')
+            if (not os.path.exists(flexible_ligands_path)) or (not os.path.exists(rigid_ligands_path)) :
                 try :
                     smiles = self.get_smiles_for_pdb_id(pdb_id)
-                    ce = cel.load_ensemble_from_smiles(smiles,
-                                                    load_dir='generated')
+                    ce = cel.get_ensemble_from_smiles(smiles,
+                                                      library_name='generated')
                     rdkit_mol = ce.mol
-                    if rdkit_mol.GetNumConformers() == 100 :
-                        params.append((rdkit_mol, pdb_id))
+                    params.append((rdkit_mol, pdb_id))
                 except Exception as e :
                     print(f'{pdb_id} not included')
                     print(str(e))
@@ -169,7 +166,7 @@ class RigidDocking() :
             done_looping = False
             while not done_looping:
                 try:
-                    try :
+                    try:
                         item = iterator.next(timeout=600)
                     except TimeoutError:
                         print("Docking is too long, returning TimeoutError")
@@ -203,7 +200,7 @@ class RigidDocking() :
         :param pdb_id: PDB_ID of the molecule, useful to retrieve output dir
         :type pdb_id: str
         :return: List of top poses, one per ligand name
-        :rtupe: list[ccdc.docking.Docker.Results.DockedLigand]
+        :rtype: list[ccdc.docking.Docker.Results.DockedLigand]
         """
         
         top_poses = None 
@@ -237,7 +234,7 @@ class RigidDocking() :
         
         smiles = self.smiles_df[self.smiles_df['id'] == pdb_id]['smiles'].values[0]
         
-        ce = cel.load_ensemble_from_smiles(smiles)
+        ce = cel.get_ensemble_from_smiles(smiles)
         
         rdkit_native_ligand = None
         for conf in ce.mol.GetConformers() :
@@ -252,7 +249,6 @@ class RigidDocking() :
         
         if rdkit_native_ligand is None :
             print(f'{smiles} : {pdb_id} not found')
-                    
         
         return rdkit_native_ligand
     
@@ -269,7 +265,7 @@ class RigidDocking() :
         self.model_checkpoint_name = os.listdir(self.model_checkpoint_dir)[0]
         self.model_checkpoint_path = os.path.join(self.model_checkpoint_dir,
                                                 self.model_checkpoint_name)
-        self.model = LitSchNet.load_from_checkpoint(self.model_checkpoint_path)
+        self.model = BioSchNet.load_from_checkpoint(self.model_checkpoint_path)
         self.model.eval()
         
         if self.use_cuda and torch.cuda.is_available() :
@@ -319,7 +315,7 @@ class RigidDocking() :
                 done_looping = False
                 while not done_looping:
                     try:
-                        try :
+                        try:
                             results = iterator.next(timeout=600)
                         except TimeoutError:
                             print("Analysis is too long, returning TimeoutError")
@@ -353,7 +349,9 @@ class RigidDocking() :
         
         print(f'Analyzing {pdb_id}')
         results = None
-        results_path = os.path.join(self.output_dir, pdb_id, 'results.json')
+        results_path = os.path.join(self.output_dir, 
+                                    pdb_id, 
+                                    'results.json')
         with open(results_path, 'r') as f :
             results = json.load(f)
         
@@ -371,17 +369,17 @@ class RigidDocking() :
             
             included = True
             for selector_name, pose_selector in self.pose_selectors.items() :
-                if included: # if mol_featurizer fails, sorted_poses is None
-                    try :
-                        sorted_poses = pose_selector.select_poses(poses=rigid_poses)
+                try :
+                    sorted_poses = pose_selector.select_poses(poses=rigid_poses)
+                    
+                    ranker_results = self.evaluate_ranker(poses=sorted_poses,
+                                                            native_ligand=native_ligand)
+                    results['rigid'][selector_name] = ranker_results
                         
-                        ranker_results = self.evaluate_ranker(poses=sorted_poses,
-                                                              native_ligand=native_ligand)
-                        results['rigid'][selector_name] = ranker_results
-                            
-                    except PoseSelectionError :
-                        print(f'No pose selected for {pdb_id}')
-                        included = False
+                except PoseSelectionError :
+                    print(f'No pose selected for {pdb_id}')
+                    included = False
+                    break
                 
             if included :
                 
@@ -560,7 +558,7 @@ class RigidDocking() :
         ylabel = 'Recall'
         columns = [xlabel, ylabel, 'metric', 'ranker']
         df = pd.DataFrame()
-        thresholds = range(100)
+        thresholds = range(250)
         for metric, top_indexes_metric in top_indexes.items():
             print(metric)
             for ranker, top_indexes_task in top_indexes_metric.items():
@@ -608,8 +606,8 @@ class RigidDocking() :
                 suffix = 'all'
             
             fig_name = f'retrieval_{metric}_{split}_{suffix}.png'
-            save_path = os.path.join('results/', 
-                                     f'{split}_split_{split_i}_pdbbind/',
+            save_path = os.path.join('/home/bb596/hdd/pdbbind_bioactive/results', 
+                                     f'{split}_split_{split_i}/',
                                      fig_name)
             plt.savefig(save_path)
             plt.clf()
@@ -618,8 +616,8 @@ class RigidDocking() :
         df['Recall'] = df['Recall'] / n_flexible_mols
             
         # save recalls
-        df_path = os.path.join('results/',
-                                f'{split}_split_{split_i}_pdbbind/',
+        df_path = os.path.join('/home/bb596/hdd/pdbbind_bioactive/results',
+                                f'{split}_split_{split_i}/',
                                 f'rigid_ligand_docking_recall_{suffix}.csv')
         df.to_csv(df_path)
         
@@ -651,9 +649,20 @@ if __name__ == '__main__':
     rigid_docking.dock_molecule_pool(test_pdb_ids=test_pdb_ids)
     
     start_time = time.time()
-    rigid_docking.docking_analysis_pool()
-    runtime = time.time() - start_time
+    for split in splits :
+        for split_i in split_is :
+            print(split)
+            print(split_i)
+            rigid_docking.docking_analysis_pool(split=split,
+                                                split_i=split_i)
+            print('All results')
+            rigid_docking.analysis_report(split=split,
+                                        split_i=split_i,
+                                        only_good_docking=False)
+            print('Only good docking results')
+            rigid_docking.analysis_report(split=split,
+                                        split_i=split_i,
+                                        only_good_docking=True)
+            runtime = time.time() - start_time
     print(f'{runtime} seconds runtime')
-
-    rigid_docking.analysis_report()
             
