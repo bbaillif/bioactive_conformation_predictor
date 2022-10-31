@@ -4,7 +4,7 @@ import pandas as pd
 class ChEMBLConnector():
     
     def __init__(self,
-                 chembl_sqlite_path: str='/home/benoit/ChEMBL/chembl_29_sqlite/chembl_29.db') -> None:
+                 chembl_sqlite_path: str='/home/bb596/hdd/ChEMBL/chembl_29_sqlite/chembl_29.db') -> None:
         self.chembl_sqlite_path = chembl_sqlite_path
         
     def get_connector(self) :

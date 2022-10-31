@@ -24,7 +24,7 @@ class PoseReader() :
                 prop_name = line.replace('<', '').replace('>', '').strip()
             elif write_prop :
                 if line.strip() == '' :
-                    props[prop_name] = ''.join(props[prop_name])
+                    props[prop_name] = ''.join(props[prop_name]) #.strip()
                     write_prop = False
                 else : 
                     props[prop_name].append(line)

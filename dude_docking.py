@@ -1,8 +1,7 @@
 import os
-from re import sub
 import sys
+import time
 import numpy as np
-import torch
 import argparse
 import json
 
@@ -11,18 +10,17 @@ from rdkit import Chem
 from rdkit.ML.Scoring.Scoring import CalcEnrichment, CalcBEDROC
 from ccdc.io import MoleculeReader
 from ccdc.conformer import ConformerGenerator
-from molecule_featurizer import MoleculeFeaturizer
-from bioschnet import BioSchNet
+from conf_ensemble.conf_ensemble import ConfEnsemble
+from model.bioschnet import BioSchNet
 from gold_docker import GOLDDocker
-from pose_reader import PoseReader
-from pose_selector import (IdentityPoseSelector, Pose,
-                           RandomPoseSelector,
-                           ScorePoseSelector,
-                           EnergyPoseSelector,
-                           ModelPoseSelector)
+from rankers import (ModelRanker, 
+                     ShuffleRanker,
+                     CCDCRanker,
+                     EnergyRanker,
+                     PropertyRanker)
 from multiprocessing import Pool
+from data.data_split import MoleculeSplit
 from ccdc_rdkit_connector import CcdcRdkitConnector
-from collections import defaultdict
 
 class DUDEDocking() :
     """ Performs docking for actives and decoys for a target in DUD-E
@@ -39,12 +37,14 @@ class DUDEDocking() :
                  target: str='jak2',
                  dude_dir: str='/home/bb596/hdd/DUD-E/all',
                  rigid_docking: bool=False,
-                 use_selector_scoring: bool=False):
+                 use_selector_scoring: bool=False,
+                 use_cuda: bool = True):
         
         self.target = target
         self.dude_dir = dude_dir
         self.rigid_docking = rigid_docking
         self.use_selector_scoring = use_selector_scoring
+        self.use_cuda = use_cuda
         
         self.target_dir = os.path.join(self.dude_dir, self.target)
         self.actives_file = 'actives_final.mol2.gz'
@@ -81,7 +81,8 @@ class DUDEDocking() :
         self.gold_docker = GOLDDocker(protein_path=self.protein_path,
                                       native_ligand_path=self.ligand_path,
                                       output_dir='/home/bb596/hdd/gold_docking_dude',
-                                      experiment_id=self.experiment_id)
+                                      experiment_id=self.experiment_id,
+                                      prepare_protein=True)
         
         for mol_id, ccdc_mol in zip(mol_ids, all_mols) :
             try :
@@ -95,7 +96,7 @@ class DUDEDocking() :
                 print(f'Docking failed for {mol_id}')
                 
                 
-    def dock_pool(self, max_f_actives=0.8) :
+    def dock_pool(self, max_f_actives=1) :
         
         active_mols_reader = MoleculeReader(self.actives_path)
         active_mols = [mol for mol in active_mols_reader]
@@ -104,9 +105,9 @@ class DUDEDocking() :
         active_mol_ids = [f'active_{i}' for i in range(n_actives)]
         
         decoy_mols_reader = MoleculeReader(self.decoys_path)
-        n_decoys = 50 * n_actives
-        decoy_mols = [mol for mol in decoy_mols_reader][:n_decoys]
-        decoy_mol_ids = [f'decoy_{i}' for i in range(n_decoys)]
+        # n_decoys = 50 * n_actives
+        decoy_mols = [mol for mol in decoy_mols_reader] # [:n_decoys]
+        decoy_mol_ids = [f'decoy_{i}' for i in range(len(decoy_mols))]
         
         all_mols = active_mols + decoy_mols
         mol_ids = active_mol_ids + decoy_mol_ids
@@ -146,15 +147,16 @@ class DUDEDocking() :
             
             if self.rigid_docking :
                 ccdc_mols = self.generate_conformers_for_molecule(ccdc_mol)
-                n_poses = 1
             else :
                 ccdc_mols = [ccdc_mol]
-                n_poses = 20
+                
+            n_poses = 5
             
             self.gold_docker = GOLDDocker(protein_path=self.protein_path,
                                         native_ligand_path=self.ligand_path,
                                         output_dir='/home/bb596/hdd/gold_docking_dude',
-                                        experiment_id=self.experiment_id) 
+                                        experiment_id=self.experiment_id,
+                                        prepare_protein=True) 
             results = self.gold_docker.dock_molecules(ccdc_mols=ccdc_mols,
                                                     mol_id=mol_id,
                                                     n_poses=n_poses,
@@ -194,46 +196,52 @@ class DUDEDocking() :
         
         """
         
+        split = 'random'
+        split_i = 0
         self.gold_docker = GOLDDocker(protein_path=self.protein_path,
                                       native_ligand_path=self.ligand_path,
                                       output_dir='/home/bb596/hdd/gold_docking_dude',
                                       experiment_id=self.experiment_id)
-        self.mol_featurizer = MoleculeFeaturizer()
         
-        self.pose_selectors = {}
+        self.model_checkpoint_dir = os.path.join('lightning_logs',
+                                                f'{split}_split_{split_i}',
+                                                'checkpoints')
+        self.model_checkpoint_name = os.listdir(self.model_checkpoint_dir)[0]
+        self.model_checkpoint_path = os.path.join(self.model_checkpoint_dir,
+                                                self.model_checkpoint_name)
+        config = {"num_interactions": 6,
+                  "cutoff": 10,
+                  "lr":1e-5,
+                  'batch_size': 256,
+                  'data_split': MoleculeSplit()}
+        model = BioSchNet.load_from_checkpoint(self.model_checkpoint_path, config=config)
+        
+        self.rankers = [
+            ModelRanker(model=model, use_cuda=self.use_cuda),
+            ShuffleRanker(),
+            CCDCRanker(),
+            EnergyRanker(),
+            # PropertyRanker(descriptor_name='Gold.PLP.Fitness',
+            #                ascending=False)
+        ]
+        
+        self.conf_fractions = np.around(np.arange(0.01, 1.01, 0.01), 2)
+        self.ef_fractions = np.around(np.arange(0.01, 1.01, 0.01), 2)
         
         self.active_max_scores = [] # [{percentage_conf : max_score}]
         self.decoy_max_scores = []
         
-        for split in ['random', 'scaffold', 'protein'] :
-        
-            model_checkpoint_dir = os.path.join('lightning_logs',
-                                                    f'{split}_split_2', # 2 is taken since there is no CDK2 in this split
-                                                    'checkpoints')
-            model_checkpoint_name = os.listdir(model_checkpoint_dir)[0]
-            model_checkpoint_path = os.path.join(model_checkpoint_dir,
-                                                 model_checkpoint_name)
-            model = BioSchNet.load_from_checkpoint(model_checkpoint_path)
-            model.eval()
-            
-            if use_cuda and torch.cuda.is_available() :
-                model = model.to('cuda')
-            else :
-                model = model.to('cpu')
-        
-            self.pose_selectors[f'model_{split}'] = ModelPoseSelector(model=model,
-                                                                    mol_featurizer=self.mol_featurizer,
-                                                                    ratio=1)
-        
-        self.pose_selectors['random'] = RandomPoseSelector(ratio=1)
-        self.pose_selectors['score'] = ScorePoseSelector(ratio=1)
-        self.pose_selectors['energy'] = EnergyPoseSelector(mol_featurizer=self.mol_featurizer,
-                                                            ratio=1)
-        self.pose_selectors['ccdc'] = IdentityPoseSelector(ratio=1)
-        
         dude_docking_dir = os.path.join(self.gold_docker.output_dir,
                                         self.gold_docker.experiment_id)
         docked_dirs = os.listdir(dude_docking_dir)
+        
+        # Only test flexible what is in rigid
+        if self.rigid_docking == False:
+            dude_docking_rigid_dir = os.path.join(self.gold_docker.output_dir,
+                                                    self.gold_docker.experiment_id + '_rigid')
+            rigid_dirs = os.listdir(dude_docking_rigid_dir)
+            docked_dirs = [d for d in docked_dirs if d in rigid_dirs]
+            
         active_dirs = [os.path.join(dude_docking_dir, d)
                        for d in docked_dirs 
                        if 'active' in d]
@@ -252,55 +260,57 @@ class DUDEDocking() :
                 self.decoy_max_scores.append(max_scores)
                
         results = {} # selector_name, percentage, efs, fractions
-        for selector_name in self.pose_selectors.keys() :
-            selector_name_results = {}
-            
-            active_max_scores = [max_scores[selector_name] 
-                                 for max_scores in self.active_max_scores]
-            decoy_max_scores = [max_scores[selector_name] 
-                                 for max_scores in self.decoy_max_scores]
-            for percentage in range(1, 101) :
-                percentage_results = {}
-                active_2d_list = [[max_scores[percentage], True] 
-                                  for max_scores in active_max_scores]
-                decoy_2d_list = [[max_scores[percentage], False] 
-                                  for max_scores in decoy_max_scores]
-            
-                all_2d_list = active_2d_list + decoy_2d_list
-                all_2d_array = np.array(all_2d_list)
+        try:
+            for ranker in self.rankers :
+                selector_name_results = {}
                 
-                if selector_name == 'score' or not self.use_selector_scoring:
-                    sorting = np.argsort(-all_2d_array[:, 0]) # the minus is important here
-                elif self.use_selector_scoring :
-                    sorting = np.argsort(all_2d_array[:, 0])
-                sorted_2d_array = all_2d_array[sorting]
+                active_max_scores = [max_scores[ranker.name] 
+                                    for max_scores in self.active_max_scores]
+                decoy_max_scores = [max_scores[ranker.name] 
+                                    for max_scores in self.decoy_max_scores]
+                for conf_fraction in self.conf_fractions :
+                    percentage_results = {}
+                    active_2d_list = [[max_scores[conf_fraction], True] 
+                                    for max_scores in active_max_scores]
+                    decoy_2d_list = [[max_scores[conf_fraction], False] 
+                                    for max_scores in decoy_max_scores]
+                
+                    all_2d_list = active_2d_list + decoy_2d_list
+                    all_2d_array = np.array(all_2d_list)
+                    
+                    # if ranker.name == 'Gold.PLP.Fitness' or not self.use_selector_scoring:
+                    #     sorting = np.argsort(-all_2d_array[:, 0]) # the minus is important here
+                    # elif self.use_selector_scoring :
+                    #     sorting = np.argsort(all_2d_array[:, 0])
+                    sorting = np.argsort(-all_2d_array[:, 0])
+                    sorted_2d_array = all_2d_array[sorting]
 
-                fractions = np.arange(start=0.01, 
-                                    stop=1.01, 
-                                    step=0.01)
-                fractions = np.around(fractions, decimals=2)
-                efs = CalcEnrichment(sorted_2d_array, 
-                                    col=1,
-                                    fractions=fractions)
-                efs = np.around(efs, decimals=3)
-                ef_results = {}
-                for fraction, ef in zip(fractions, efs) :
-                    # print(f'{selector_name} has EF{fraction} of {ef}')
-                    ef_results[fraction] = ef
-                percentage_results['ef'] = ef_results
+                    # efs = CalcEnrichment(sorted_2d_array, 
+                    #                     col=1,
+                    #                     fractions=self.ef_fractions)
+                    # efs = np.around(efs, decimals=3)
+                    # ef_results = {}
+                    # for ef_fraction, ef in zip(self.ef_fractions, efs) :
+                    #     # print(f'{selector_name} has EF{fraction} of {ef}')
+                    #     ef_results[ef_fraction] = ef
+                    # percentage_results['ef'] = ef_results
+                    
+                    bedroc = CalcBEDROC(sorted_2d_array, 
+                                        col=1, 
+                                        alpha=20)
+                    bedroc = np.around(bedroc, decimals=3)
+                    # print(f'{selector_name} has BEDROC of {bedroc}')
+                    
+                    percentage_results['all_2d_list'] = all_2d_list
+                    percentage_results['bedroc'] = bedroc
+                    
+                    selector_name_results[conf_fraction] = percentage_results
+                    
+                results[ranker.name] = selector_name_results
                 
-                bedroc = CalcBEDROC(sorted_2d_array, 
-                                    col=1, 
-                                    alpha=20)
-                bedroc = np.around(bedroc, decimals=3)
-                # print(f'{selector_name} has BEDROC of {bedroc}')
-                
-                percentage_results['all_2d_list'] = all_2d_list
-                percentage_results['bedroc'] = bedroc
-                
-                selector_name_results[percentage] = percentage_results
-                
-            results[selector_name] = selector_name_results
+        except Exception as e:
+            print(str(e))
+            import pdb;pdb.set_trace()
             
         if self.use_selector_scoring :
             results_file_name = 'results_custom_score.json'
@@ -316,22 +326,30 @@ class DUDEDocking() :
     def evaluate_molecule(self,
                           directory) :
         max_scores = {}
-        poses = self.get_poses(directory=directory)
-        if poses :
-            for selector_name, pose_selector in self.pose_selectors.items() :
-                ranked_poses = pose_selector.select_poses(poses)
+        # import pdb;pdb.set_trace()
+        poses_ce = self.get_poses_ce(directory)
+        if poses_ce :
+            for ranker in self.rankers:
+                # print(ranker.name)
+                start_time = time.time()
+                ranked_poses = ranker.rank_confs(poses_ce.mol)
+                # print(time.time() - start_time)
                 if ranked_poses :
-                    max_scores[selector_name] = {}
-                    n_poses = len(ranked_poses)
-                    scores = [pose.fitness() 
-                              for pose in ranked_poses]
-                    for percentage in range(1, 101) :
+                    max_scores[ranker.name] = {}
+                    n_poses = ranked_poses.GetNumConformers()
+                    scores = []
+                    for pose in ranked_poses.GetConformers() :
+                        score = pose.GetProp('Gold.PLP.Fitness')
+                        if isinstance(score, str):
+                            score = score.strip()
+                            score = float(score)
+                        scores.append(score)
+                    for fraction in self.conf_fractions :
                         try :
-                            n_conf = percentage * n_poses // 100
-                            n_conf = max(1, n_conf) # avoid n_conf = 0 situation
+                            n_conf = int(np.ceil(n_poses * fraction))
                             subset_scores = scores[:n_conf]
                             max_score = np.max(subset_scores)
-                            max_scores[selector_name][percentage] = max_score
+                            max_scores[ranker.name][fraction] = max_score
                         except :
                             import pdb;pdb.set_trace()
                 else :
@@ -339,11 +357,12 @@ class DUDEDocking() :
                     break
         else :
             max_scores = None
+    
         return max_scores
     
 
-    def get_poses(self, 
-                  directory) :
+    def get_poses_ce(self, 
+                  directory) -> ConfEnsemble:
         """Obtain poses for a given directory (referring to a molecule)
         
         :param directory: directory for GOLD docking of a single molecule
@@ -352,22 +371,26 @@ class DUDEDocking() :
         :rtype: list[Pose]
         """
         
-        poses = None
+        ce = None
         docked_ligands_path = os.path.join(directory,
                                            self.gold_docker.docked_ligand_name)
         if os.path.exists(docked_ligands_path) :
-            # poses_reader = Docker.Results.DockedLigandReader(docked_ligands_path,
-            #                                                  settings=None)
-            # poses_reader = EntryReader(docked_ligands_path)
-            # previous solutions are slow or error prone
-            try :
-                poses_reader = PoseReader(docked_ligands_path)
-                poses = [Pose(pose) for pose in poses_reader]
+            try:
+                ce = ConfEnsemble.from_file(docked_ligands_path)
+                seen_ligands = []
+                for pose in ce.mol.GetConformers() :
+                    identifier = pose.GetProp('_Name')
+                    lig_num = identifier.split('|')[1]
+                    if not lig_num in seen_ligands :
+                        seen_ligands.append(lig_num)
+                    else:
+                        conf_id = pose.GetId()
+                        ce.mol.RemoveConformer(conf_id)
             except Exception as e :
                 print(f'Reading poses failed for {docked_ligands_path}')
                 print(str(e))
         
-        return poses
+        return ce
         
         
     def load_and_select_poses(self,
@@ -406,13 +429,13 @@ if __name__ == '__main__':
     else :
         targets = [args.target]
         
-    targets = ['jak2']
+    targets = ['cdk2', 'bace1'] #, 'nos1']
     for target in targets :
-        dude_docking = DUDEDocking(target=target,
-                                   rigid_docking=True)
-        dude_docking.dock_pool()
-        dude_docking.ef_analysis()
+        # dude_docking = DUDEDocking(target=target,
+        #                            rigid_docking=True)
+        # dude_docking.dock_pool()
+        # dude_docking.ef_analysis()
         dude_docking = DUDEDocking(target=target,
                                    rigid_docking=False)
         dude_docking.dock_pool()
-        # dude_docking.ef_analysis()
+        dude_docking.ef_analysis()

@@ -35,6 +35,7 @@ class GOLDDocker() :
                  output_dir: str='gold_docking_dude',
                  prepare_protein: bool=False,
                  binding_site_distance: int=6, # default value in CSD GOLD Python API
+                 early_termination: bool = False,
                  ):
         
         self.protein_path = protein_path
@@ -43,6 +44,7 @@ class GOLDDocker() :
         self.output_dir = os.path.abspath(output_dir)
         self.prepare_protein = prepare_protein
         self.binding_site_distance = binding_site_distance
+        self.early_termination = early_termination
         
         if not os.path.exists(self.output_dir) :
             os.mkdir(self.output_dir)
@@ -53,7 +55,7 @@ class GOLDDocker() :
         self.settings = self.docker.settings
         self.settings.fitness_function = 'plp'
         # self.settings.autoscale = 50.
-        self.settings.early_termination = False
+        self.settings.early_termination = self.early_termination
         self.settings.diverse_solutions = True
         
         self.settings.write_options = ['NO_FIT_PTS_FILES', 
