@@ -10,7 +10,7 @@ from typing import List
 from .conf_ensemble_dataset import ConfEnsembleDataset
 from .pdbbind import PDBBindMetadataProcessor
 from .pdb_ligand_expo import PDBLigandExpo
-from .data_split import DataSplit
+from .split.data_split import DataSplit
 from .rmsd_calculator import RMSDCalculator
 from featurizer import PyGFeaturizer
 from conf_generator import ConfGenerator

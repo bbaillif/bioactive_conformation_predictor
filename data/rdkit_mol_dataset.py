@@ -4,7 +4,7 @@ import pandas as pd
 
 from rdkit.Chem.rdchem import Conformer
 from .conf_ensemble_dataset import ConfEnsembleDataset
-from .data_split import DataSplit
+from .split.data_split import DataSplit
 from typing import Tuple
 from tqdm import tqdm
 

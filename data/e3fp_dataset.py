@@ -12,7 +12,7 @@ from e3fp.fingerprint.generate import fprints_dict_from_mol
 from e3fp.fingerprint.db import FingerprintDatabase, concat
 from e3fp.fingerprint.fprint import CountFingerprint
 from scipy.sparse import csr_matrix
-from .data_split import DataSplit
+from .split.data_split import DataSplit
 from multiprocessing import Pool
 from .conf_ensemble_dataset import ConfEnsembleDataset
 
