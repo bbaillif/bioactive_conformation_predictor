@@ -3,7 +3,7 @@ import pytorch_lightning as pl
 
 from rdkit import Chem # safe import before ccdc imports
 from data.pyg_dataset import PyGDataset
-from data.data_split import MoleculeSplit, ProteinSplit
+from data.split.data_split import MoleculeSplit, ProteinSplit
 from model.bioschnet import BioSchNet
 from pytorch_lightning.callbacks.model_checkpoint import ModelCheckpoint
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping

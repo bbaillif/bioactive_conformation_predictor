@@ -19,7 +19,7 @@ from rankers import (ModelRanker,
                      EnergyRanker,
                      PropertyRanker)
 from multiprocessing import Pool
-from data.data_split import MoleculeSplit
+from data.split.data_split import MoleculeSplit
 from ccdc_rdkit_connector import CcdcRdkitConnector
 
 class DUDEDocking() :

@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from rdkit.Chem.rdchem import Mol
 from typing import List, Sequence, Dict, Tuple
 from torch.utils.data import Subset
-from data.data_split import DataSplit
+from data.split.data_split import DataSplit
 from tqdm import tqdm
 from conf_ensemble import ConfEnsemble
 

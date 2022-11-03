@@ -3,7 +3,7 @@ import pytorch_lightning as pl
 
 from rdkit import Chem # safe import before ccdc imports
 from data.e3fp_dataset import E3FPDataset
-from data.data_split import MoleculeSplit, ProteinSplit
+from data.split.data_split import MoleculeSplit, ProteinSplit
 from model.e3fp_model import E3FPModel
 from pytorch_lightning.callbacks.model_checkpoint import ModelCheckpoint
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping

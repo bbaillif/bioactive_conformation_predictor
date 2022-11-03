@@ -23,7 +23,7 @@ from model.bioschnet import BioSchNet
 from ccdc.descriptors import MolecularDescriptors
 from gold_docker import GOLDDocker
 from multiprocessing import Pool, TimeoutError
-from data.data_split import MoleculeSplit, ProteinSplit
+from data.split.data_split import MoleculeSplit, ProteinSplit
 from rankers import (ModelRanker, 
                      EnergyRanker, 
                      CCDCRanker, 
