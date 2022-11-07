@@ -1,4 +1,4 @@
-from data_split import DataSplit
+from .data_split import DataSplit
 
 class NoSplit(DataSplit) :
     

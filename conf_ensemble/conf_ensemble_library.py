@@ -186,3 +186,27 @@ class ConfEnsembleLibrary() :
         except Exception as e:
             print(str(e))
             print(f'Loading failed for {name}')
+            
+    
+    @classmethod   
+    def get_merged_ce(cls,
+                      filename: str, 
+                      name: str,
+                      root: str = '/home/bb596/hdd/pdbbind_bioactive/data',
+                      cel_name1: str = 'pdb_conf_ensembles',
+                      cel_name2: str = 'gen_conf_ensembles',
+                      output: str = 'conf_ensemble') -> 'ConfEnsemble': 
+        cel_dir1 = os.path.join(root, cel_name1)
+        
+        ce_filepath = os.path.join(cel_dir1, filename)
+        conf_ensemble = ConfEnsemble.from_file(filepath=ce_filepath, 
+                                                name=name)
+        
+        cel_dir2 = os.path.join(root, cel_name2)
+        gen_ce_filepath = os.path.join(cel_dir2, filename)
+        gen_conf_ensemble = ConfEnsemble.from_file(filepath=gen_ce_filepath, 
+                                                    name=name,
+                                                    output=output)
+        
+        gen_conf_ensemble.add_mol(conf_ensemble.mol, standardize=False)
+        return gen_conf_ensemble

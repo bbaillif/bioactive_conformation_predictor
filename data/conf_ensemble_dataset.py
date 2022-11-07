@@ -1,13 +1,12 @@
 import os
 import numpy as np
 import pandas as pd
-import torch
 
 from abc import ABC, abstractmethod
 from rdkit.Chem.rdchem import Mol
 from typing import List, Sequence, Dict, Tuple
 from torch.utils.data import Subset
-from data.split.data_split import DataSplit
+from .split import DataSplit
 from tqdm import tqdm
 from conf_ensemble import ConfEnsemble
 

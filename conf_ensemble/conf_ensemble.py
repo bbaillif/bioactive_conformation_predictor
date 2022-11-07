@@ -1,3 +1,5 @@
+import os
+
 from typing import List
 from rdkit import Chem
 from rdkit.Chem import SDWriter
@@ -91,7 +93,7 @@ class ConfEnsemble() :
                   filepath: str,
                   name: str = None,
                   output: str = 'conf_ensemble',
-                  standardize: bool = False) :
+                  standardize: bool = False) -> 'ConfEnsemble':
         """
         Constructor to create a conf ensemble from a sdf file
         
@@ -165,3 +167,4 @@ class ConfEnsemble() :
                 value = conf.GetProp(prop)
                 mol.SetProp(prop, str(value))
             writer.write(mol, conf_id)
+            

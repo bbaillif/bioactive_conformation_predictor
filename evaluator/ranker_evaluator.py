@@ -10,7 +10,7 @@ from .evaluator import Evaluator
 from torch.utils.data import Subset
 from rankers import ModelRanker
 from model.bioschnet import BioSchNet
-from data import MoleculeSplit
+from data.split import MoleculeSplit
 from rankers import (ConfRanker, ModelRanker, PropertyRanker)
 from typing import Sequence, List, Dict, Any
 from rdkit import Chem

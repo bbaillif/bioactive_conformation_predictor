@@ -12,7 +12,7 @@ from featurizer import PyGFeaturizer
 from torch_geometric.data import Batch
 from torch_geometric.loader import DataLoader as PyGDataLoader
 from mol_drawer import MolDrawer
-from data import DataSplit
+from data.split import DataSplit
 from typing import Any, Dict
 from model.conf_ensemble_model import ConfEnsembleModel
 
@@ -94,6 +94,8 @@ class BioSchNet(ConfEnsembleModel):
                     loss_name: str = 'train_loss'):
         pred = self.forward(batch)
         y = batch.rmsd
+        if not torch.all(y >= 0):
+            import pdb;pdb.set_trace()
         loss = F.mse_loss(pred.squeeze(), y)
         self.log(loss_name, loss, batch_size=self.batch_size)
         return loss
@@ -128,6 +130,7 @@ class BioSchNet(ConfEnsembleModel):
                                   save_dir: str=None) :
         data_list = self.featurizer.featurize_mol(mol)
         batch = Batch.from_data_list(data_list)
+        batch.to(self.device)
         atomic_contributions = self.get_atomic_contributions(batch)
         atomic_contributions = atomic_contributions
         for batch_i in batch.batch.unique() :

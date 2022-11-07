@@ -1,16 +1,24 @@
 import os
-from data_split import DataSplit
+import random
 
-class ProteinSplit(DataSplit) :
+from abc import ABC
+from .data_split import DataSplit
+
+class ProteinSplit(DataSplit, ABC) :
     
     def __init__(self, 
-                 split_type: str = 'protein', 
-                 split_i: int = 0) -> None:
-        assert split_type in ['protein']
-        super().__init__(split_type=split_type,
-                         split_i=split_i)
-        self.split_dir = os.path.join(self.root,
-                                      f'{split_type}_splits')
+                 split_type: str, 
+                 split_i: int, 
+                 cel_name: str = 'pdb_conf_ensembles', 
+                 root: str = '/home/bb596/hdd/pdbbind_bioactive/data/', 
+                 splits_dirname: str = 'splits', 
+                 rmsd_name: str = 'rmsds') -> None:
+        super().__init__(split_type, 
+                         split_i, 
+                         cel_name, 
+                         root, 
+                         splits_dirname, 
+                         rmsd_name)
         
     # recursive function
     def get_pdb_ids(self, 
@@ -22,8 +30,9 @@ class ProteinSplit(DataSplit) :
                 pdb_ids = self.get_pdb_ids(subset)
                 all_pdb_ids.extend(pdb_ids)
         else:
-            split_filename = f'{subset_name}_pdb_{self.split_i}.txt'
-            split_filepath = os.path.join(self.split_dir, split_filename)
+            split_filename = f'{subset_name}_pdbs.txt'
+            split_filepath = os.path.join(self.split_dir_path, 
+                                          split_filename)
             with open(split_filepath, 'r') as f :
                 pdb_ids = [s.strip() for s in f.readlines()]
             all_pdb_ids = pdb_ids

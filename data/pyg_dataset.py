@@ -132,7 +132,14 @@ class PyGDataset(ConfEnsembleDataset, InMemoryDataset) :
             
     def add_bioactive_rmsds(self,
                             data_split: DataSplit) :
-        rmsds = self.get_bioactive_rmsds(data_split)
+        data_split.set_dataset(self)
+        rmsd_df = data_split.get_bioactive_rmsds()
+        df = self.mol_id_df.merge(rmsd_df.reset_index(), 
+                                  on='mol_id',
+                                  how='left') # in case RMSD is not defined for splits of a subset of the whole dataset (e.g. kinases)
+        df = df.fillna(-1)
+        import pdb;pdb.set_trace()
+        rmsds = df['rmsd'].values
         self.data.rmsd = torch.tensor(rmsds, dtype=torch.float32)
         self.slices['rmsd'] = torch.arange(len(rmsds) + 1)
             
