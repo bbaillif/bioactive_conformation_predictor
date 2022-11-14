@@ -8,7 +8,8 @@ from rdkit.DataStructs.cDataStructs import BulkTanimotoSimilarity
 
 class SimilaritySearch() :
     
-    def __init__(self, smiles_list) :
+    def __init__(self, 
+                 smiles_list) :
         self.smiles_list = list(set(smiles_list))
         self.mols = [Chem.MolFromSmiles(smiles) for smiles in self.smiles_list]
         self.fps = [self.get_morgan_fingerprint(mol) for mol in self.mols]

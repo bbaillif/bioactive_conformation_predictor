@@ -82,6 +82,17 @@ class ConfEnsembleLibrary() :
                       mol_dict: Dict[str, Mol],
                       cel_name: str = 'pdb_conf_ensembles',
                       root: str = '/home/bb596/hdd/pdbbind_bioactive/data') :
+        """
+        Creates a ConfEnsemble from a dict of molecules each containing conformations
+        
+        :param mol_dict: dict of RDKit molecules
+        :type mol_dict: Dict[str, Mol]
+        :param cel_name: name of the library
+        :type cel_name: str
+        :param root: root directory of data storage
+        :type root: str
+        
+        """
         conf_ensemble_library = cls(cel_name, root)
         for name, mol_list in tqdm(mol_dict.items()) :
             try :
@@ -100,6 +111,17 @@ class ConfEnsembleLibrary() :
                      ce_dict: Dict[str, ConfEnsemble],
                      cel_name: str = 'pdb_conf_ensembles',
                      root: str = '/home/bb596/hdd/pdbbind_bioactive/data'):
+        """
+        Creates a ConfEnsemble from a dict of conf ensembles
+        
+        :param mol_dict: dict of ConfEnsemble
+        :type mol_dict: Dict[str, ConfEnsemble]
+        :param cel_name: name of the library
+        :type cel_name: str
+        :param root: root directory of data storage
+        :type root: str
+        
+        """
         conf_ensemble_library = cls(cel_name, root)
         for name, ce in tqdm(ce_dict.items()) :
             try :
@@ -113,6 +135,11 @@ class ConfEnsembleLibrary() :
     
             
     def load(self) :
+        """
+        Load the ConfEnsembles in the cel_dir given as input when creating the library
+        and load associated metadata in cel_df
+        
+        """
         if os.path.exists(self.csv_filepath) :
             self.cel_df = pd.read_csv(self.csv_filepath)
             filenames = [f for f in os.listdir(self.cel_dir) if 'sdf' in f]
@@ -128,6 +155,10 @@ class ConfEnsembleLibrary() :
             
             
     def save(self) :
+        """
+        Save the ConfEnsembles in the cel_dir, and the metadata in cel_df and pdbbind_df
+        
+        """
         names = list(self.library.keys())
         print('Saving conf ensembles')
         for name_i, name in enumerate(tqdm(names)) :
@@ -145,6 +176,13 @@ class ConfEnsembleLibrary() :
             
     def merge(self,
               conf_ensemble_library: 'ConfEnsembleLibrary') :
+        """
+        Merge the ConfEnsembles from the input library and current library
+        Only add conformations to molecules existing in the current library
+        
+        :param conf_ensemble_library: Input library to add confs from
+        :type conf_ensemble_library: ConfEnsembleLibrary
+        """
         for name in self.library :
             if name in conf_ensemble_library.library :
                 ce = self.library[name]
@@ -159,6 +197,10 @@ class ConfEnsembleLibrary() :
                 
     # we could use the PDBBindDataProcessor to do that
     def create_pdbbind_df(self) :
+        """
+        Create the DataFrame associating each ligand name to its pdb id
+        for the current library
+        """
         pdbbind_df = pd.DataFrame(columns=['ligand_name', 'pdb_id'])
         for name in self.library :
             mol = self.library[name].mol
@@ -174,6 +216,18 @@ class ConfEnsembleLibrary() :
     def view_ensemble(name: str,
                       cel_name: str = 'gen_conf_ensembles',
                       root: str = '/home/bb596/hdd/pdbbind_bioactive/data'):
+        """
+        View the ConfEnsemble for the input molecule name from the 
+        given cel_name using MolConfViewer
+        
+        :param name: Name of the molecule
+        :type name: str
+        :param cel_name: Name of the library to refer to
+        :type cel_name: str
+        :param root: Data directory
+        :type root: str
+        
+        """
         cel_dir = os.path.join(root, cel_name)
         csv_filename = 'ensemble_names.csv'
         csv_filepath = os.path.join(cel_dir, csv_filename)
@@ -194,8 +248,26 @@ class ConfEnsembleLibrary() :
                       name: str,
                       root: str = '/home/bb596/hdd/pdbbind_bioactive/data',
                       cel_name1: str = 'pdb_conf_ensembles',
-                      cel_name2: str = 'gen_conf_ensembles',
-                      output: str = 'conf_ensemble') -> 'ConfEnsemble': 
+                      cel_name2: str = 'gen_conf_ensembles') -> ConfEnsemble: 
+        """
+        Merge the ConfEnsemble from 2 libraries for a molecule. We assume
+        that the filename is the same for both libraries (e.g. bioactive and
+        generated conformations of the same molecules in 2 different libraries)
+        
+        :param filename: Name of the file (i.sdf)
+        :type filename: str
+        :param name: Name of the molecule
+        :type name: str
+        :param root: Data directory
+        :type root:str
+        :param cel_name1: Name of the first library (e.g. containing bioactive conformations)
+        :type cel_name1: str
+        :param cel_name1: Name of the second library (e.g. containing generated conformations)
+        :type cel_name1: str
+        :param output: Type of the output
+        :return: ConfEnsemble with conformations from the 2 libraries for the molecule
+        :rtype: ConfEnsemble
+        """
         cel_dir1 = os.path.join(root, cel_name1)
         
         ce_filepath = os.path.join(cel_dir1, filename)
@@ -205,8 +277,7 @@ class ConfEnsembleLibrary() :
         cel_dir2 = os.path.join(root, cel_name2)
         gen_ce_filepath = os.path.join(cel_dir2, filename)
         gen_conf_ensemble = ConfEnsemble.from_file(filepath=gen_ce_filepath, 
-                                                    name=name,
-                                                    output=output)
+                                                    name=name)
         
         gen_conf_ensemble.add_mol(conf_ensemble.mol, standardize=False)
         return gen_conf_ensemble

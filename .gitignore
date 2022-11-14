@@ -24,3 +24,6 @@ conformer_generator*
 __pycache__/
 prop_test.sdf
 pdbbind_ligands.sdf
+ghecom*
+0SB/
+L9M/

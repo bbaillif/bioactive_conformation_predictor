@@ -9,7 +9,7 @@ from tqdm import tqdm
 from .evaluator import Evaluator
 from torch.utils.data import Subset
 from rankers import ModelRanker
-from model.bioschnet import BioSchNet
+from model import SchNetModel
 from data.split import MoleculeSplit
 from rankers import (ConfRanker, ModelRanker, PropertyRanker)
 from typing import Sequence, List, Dict, Any
@@ -129,7 +129,8 @@ class RankerEvaluator(Evaluator):
             rmsds = rmsds[generated_mask]
             ranks = self.ranker.get_ranks(values)
             
-            all_mol_results['spearman'] = spearmanr(rmsds, values)
+            if values.shape[0] > 1:
+                all_mol_results['spearman'] = spearmanr(rmsds, values)
             
             all_conf_results['generated_ranks'] = ranks.tolist()
             
@@ -155,8 +156,8 @@ class RankerEvaluator(Evaluator):
                     all_mol_results[label] = label_results
                     
         except Exception as e:
+            print('Error in input list evaluation')
             print(str(e))
-            # import pdb; pdb.set_trace()
         
         return all_mol_results, all_conf_results
                 
@@ -228,6 +229,7 @@ class RankerEvaluator(Evaluator):
                 results['bedroc'] = bedroc
                 
         except Exception as e:
+            print('Error in mask ranking')
             print(str(e))
             # import pdb; pdb.set_trace()
         
@@ -305,7 +307,7 @@ if __name__ == '__main__':
                         "lr":1e-5,
                         'batch_size': 256,
                         'data_split': data_split}
-        model = BioSchNet.load_from_checkpoint(checkpoint_path=checkpoint_path, config=config)
+        model = SchNetModel.load_from_checkpoint(checkpoint_path=checkpoint_path, config=config)
         return model
     
     data_split = MoleculeSplit()

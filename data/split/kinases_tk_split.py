@@ -3,7 +3,7 @@ import numpy as np
 
 from .protein_split import ProteinSplit
 from sklearn.model_selection import train_test_split
-from data.pdbbind import PDBBindMetadataProcessor
+from data.pdbbind import PDBbindMetadataProcessor
 from data.chembl_connector import ChEMBLConnector
 
 class KinasesTKSplit(ProteinSplit):
@@ -14,7 +14,7 @@ class KinasesTKSplit(ProteinSplit):
         super().__init__(split_type, split_i)
         
     def split_dataset(self):
-        pmp = PDBBindMetadataProcessor(root='/home/bb596/hdd/PDBBind/',
+        pmp = PDBbindMetadataProcessor(root='/home/bb596/hdd/PDBbind/',
                                        remove_unknown_ligand_name=True,
                                        remove_unknown_uniprot=True)
         pdbbind_table = pmp.get_master_dataframe()

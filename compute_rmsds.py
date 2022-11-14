@@ -1,8 +1,8 @@
 import os
 import pandas as pd
 
-from data.pyg_dataset import PyGDataset
-from data.data_split import ProteinSplit
+from data.dataset import PyGDataset
+from data.split import ProteinSplit
 
 # a first CED (PyGDataset or E3FPDataset) must be created to get the mol_ids
 ced = PyGDataset()

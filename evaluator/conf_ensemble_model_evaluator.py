@@ -87,31 +87,39 @@ class ConfEnsembleModelEvaluator(Evaluator):
                        preds: Sequence[Any],
                        targets: Sequence[Any]):
         
-        if not isinstance(preds, torch.Tensor):
-            preds = torch.tensor(preds)
+        try:
+            if not isinstance(preds, torch.Tensor):
+                preds = torch.tensor(preds)
+            if not isinstance(targets, torch.Tensor):
+                targets = torch.tensor(targets)
+                targets = targets.to(preds) # preds can be on GPU initially
+                
+            preds = preds.view_as(targets)
+            
+            mol_results = {}
+            conf_results = {}
+            
+            if preds.shape[0] > 1:
+                mol_results['pearson'] = pearsonr(targets, preds)
+                mol_results['r2'] = self.r2score(targets, preds)
+            
+            conf_results['targets'] = targets
+            
+            
+            mae = F.l1_loss(targets, preds)
+            mae = mae.cpu()
+            mol_results['mae'] = mae.squeeze().item()
+            
+            mse = F.mse_loss(targets, preds)
+            rmse = torch.sqrt(mse)
+            rmse = rmse.cpu()
+            mol_results['rmse'] = rmse.squeeze().item()
+            
+            preds = preds.cpu()
+            conf_results['preds'] = preds.squeeze().tolist()
         
-        mol_results = {}
-        conf_results = {}
-        
-        mol_results['pearson'] = pearsonr(targets, preds)
-        
-        conf_results['targets'] = targets
-        targets = torch.tensor(targets)
-        targets = targets.to(preds)
-        
-        mae = F.l1_loss(targets, preds)
-        mae = mae.cpu()
-        mol_results['mae'] = mae.squeeze().item()
-        
-        mse = F.mse_loss(targets, preds)
-        rmse = torch.sqrt(mse)
-        rmse = rmse.cpu()
-        mol_results['rmse'] = rmse.squeeze().item()
-        
-        mol_results['r2'] = self.r2score(targets, preds)
-        
-        
-        preds = preds.cpu()
-        conf_results['preds'] = preds.squeeze().tolist()
+        except Exception as e:
+            print(str(e))
+            import pdb;pdb.set_trace()
         
         return mol_results, conf_results

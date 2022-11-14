@@ -7,7 +7,7 @@ from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 from multiprocessing import Pool
-from data.pdbbind import PDBBindMetadataProcessor
+from data.utils import PDBbindMetadataProcessor
 from conf_ensemble import ConfEnsembleLibrary
 from .protein_split import ProteinSplit
 
@@ -142,7 +142,7 @@ class UclusterSplit(ProteinSplit) :
                 
     @staticmethod
     def get_seq_from_pdb_id(pdb_id):
-        pmp = PDBBindMetadataProcessor(root='/home/bb596/hdd/PDBBind/')
+        pmp = PDBbindMetadataProcessor(root='/home/bb596/hdd/PDBBind/')
         protein_path, ligand_pathes = pmp.get_pdb_id_pathes(pdb_id)
         protein_pdb = protein_path
         pocket_pdb = protein_path.replace('protein', 'pocket')

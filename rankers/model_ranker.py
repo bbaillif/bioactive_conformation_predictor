@@ -26,7 +26,7 @@ class ModelRanker(ConfRanker):
                    input_list) -> Sequence[float]:
         values = self.model.get_preds_for_data_list(input_list)
         values = values.cpu()
-        return values.numpy().squeeze()
+        return values.numpy().reshape(-1)
     
     def get_input_list_from_mol(self, 
                                 mol: Mol) -> List[Any]:

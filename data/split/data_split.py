@@ -51,8 +51,6 @@ class DataSplit(ABC) :
         self.pdbbind_df = pd.read_csv(pdbbind_df_path)
         
         self.rmsd_dir = os.path.join(self.root, self.rmsd_name)
-        self.rmsd_df_path = os.path.join(self.split_dir_path, 
-                                    f'rmsds.csv')
         
     @abstractmethod
     def get_smiles(self,
@@ -78,18 +76,16 @@ class DataSplit(ABC) :
     
     # Recursive function
     def get_bioactive_rmsds(self,
-                            subset_names: List[str] = ['train', 'val', 'test']):
-        if os.path.exists(self.rmsd_df_path):
-            rmsd_df = pd.read_csv(self.rmsd_df_path)
+                            subset_name: str = 'train'):
+        assert subset_name in ['train', 'val', 'test', 'all']
+        rmsd_df_path = os.path.join(self.split_dir_path, 
+                                    f'{subset_name}_rmsds.csv')
+        if os.path.exists(rmsd_df_path):
+            rmsd_df = pd.read_csv(rmsd_df_path)
         else:
-            print('Compiling RMSD for this split')
-            rmsd_dfs = []
-            for subset_name in subset_names:
-                rmsd_df = self.compute_bioactive_rmsds(subset_name)
-                rmsd_dfs.append(rmsd_df)
-            rmsd_df = pd.concat(rmsd_dfs)
-            rmsd_df.index.name = 'mol_id'
-            rmsd_df.to_csv(self.rmsd_df_path)
+            print('Compiling RMSD for given subset')
+            rmsd_df = self.compute_bioactive_rmsds(subset_name)
+            rmsd_df.to_csv(rmsd_df_path)
         return rmsd_df
         
         
@@ -177,4 +173,15 @@ class DataSplit(ABC) :
                     
         series = pd.Series(all_bioactive_rmsds, name='rmsd')
         rmsd_df = pd.DataFrame(series)
+        rmsd_df.index.name = 'mol_id'
         return rmsd_df
+    
+    
+    def get_bioschnet_checkpoint_path(self):
+        checkpoint_dirname = os.path.join('lightning_logs',
+                                          f'{self.split_type}_split_{self.split_i}',
+                                          'checkpoints')
+        checkpoint_filename = os.listdir(checkpoint_dirname)[0]
+        checkpoint_filepath = os.path.join(checkpoint_dirname,
+                                                  checkpoint_filename)
+        return checkpoint_filepath

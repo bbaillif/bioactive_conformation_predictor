@@ -11,6 +11,9 @@ from data import E3FPDataset
 from torch.utils.data import DataLoader
 from featurizer import E3FPFeaturizer
     
+# TODO: write documentation (similar code architecture to bioschnet)
+# but featurizer give different data_list type
+    
 class E3FPModel(ConfEnsembleModel):
     
     def __init__(self,
