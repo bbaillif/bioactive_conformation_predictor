@@ -61,7 +61,7 @@ utils contains the MolConfViewer, based on nglviewer, useful to visualize molecu
 # Basic usage
 
 The main purpose of the package is to rank conformer ensemble to obtain a higher rate of bioactive-like conformers in early ranks. You can use a trained model to fuel a ranker that can give you the ranks of each conformer in a molecule:
-```
+```python
 from models import ComENetModel
 from rankers import ModelRanker
 checkpoint_path = /path/to/your/favorite/model_checkpoint.p
@@ -77,7 +77,7 @@ ranks = ranker.rank_molecule(mol)
 ```
 
 You can create a conformer ensemble from a list of molecule
-```
+```python
 from conf_ensemble import ConfEnsemble
 mol_list = listOfConformersForTheSameMolecularGraph # including same chirality
 ce = ConfEnsemble(mol_list) # ce = conf ensemble
@@ -85,7 +85,7 @@ mol = ce.mol # mol is stored in the ce
 ```
 
 You can create a conformer ensemble library from a list of molecule or a dictionnary {name: mol_list}:
-```
+```python
 from conf_ensemble_library import ConfEnsembleLibrary
 mol_list = listOfConformersForAnyMolecularGraph
 cel = ConfEnsembleLibrary.from_mol_list(mol_list) # cel = conf ensemble library
