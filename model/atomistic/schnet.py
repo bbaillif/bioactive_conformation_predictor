@@ -10,6 +10,9 @@ class AtomicSchNet(AtomisticNN, SchNet) :
     Modification of the PyG SchNet implementation to recover the atomic
     contributions to the prediction
     
+    :param readout: Readout function to perform on the list of individual
+        atomic values
+    :type readout: str
     :param num_interactions: Number of interaction blocks (see SchNet publication)
     :type num_interactions: int
     :param cutoff: Cutoff for neighbourhood graph 

@@ -2,31 +2,49 @@ from collections import defaultdict
 import numpy as np
 import os
 import pickle
-from data.e3fp_dataset import E3FPDataset
+from data.dataset import E3FPDataset
 
+from .evaluator import Evaluator
 from evaluator import ConfEnsembleModelEvaluator
 from tqdm import tqdm
-from .evaluator import Evaluator
 from torch.utils.data import Subset
 from rankers import ModelRanker
 from model import SchNetModel
 from data.split import MoleculeSplit
-from rankers import (ConfRanker, ModelRanker, PropertyRanker)
-from typing import Sequence, List, Dict, Any
+from rankers import (ConfRanker, ModelRanker)
+from rankers.tfd_ranker_sim import TFD2SimRefMCSRanker
+from typing import Sequence, List, Dict, Any, Tuple
 from rdkit import Chem
 from rdkit.Chem.rdchem import Mol
 from rdkit.ML.Scoring.Scoring import CalcEnrichment, CalcBEDROC
 from conf_ensemble import ConfEnsembleLibrary
 from scipy.stats import spearmanr
+from params import RESULTS_DIRPATH
 
 class RankerEvaluator(Evaluator):
     
     def __init__(self, 
                  ranker: ConfRanker,
                  evaluation_name: str,
-                 results_dir: str = '/home/bb596/hdd/pdbbind_bioactive/results/',
+                 results_dir: str = RESULTS_DIRPATH,
                  bioactive_threshold: float = 1,
                  non_bioactive_threshold: float = 2.5) :
+        """Evaluates conf rankers for their ability to enrich bioactive-like 
+            and impoverish non-bioactive conformers
+        
+        :param ranker: Conf ranker
+        :type ranker: ConfRanker
+        :param evaluation_name: Name of the current evaluation
+        :type evaluation_name: str
+        :param results_dir: Directory where results are stored, defaults to RESULTS_DIRPATH
+        :type results_dir: str, optional
+        :param bioactive_threshold: RMSD threshold under which a conformer
+            is bioactive-like, defaults to 1
+        :type bioactive_threshold: float, optional
+        :param non_bioactive_threshold: RMSD threshold above which a conformer
+            is non-bioactive, defaults to 2.5
+        :type non_bioactive_threshold: float, optional
+        """
         Evaluator.__init__(self, evaluation_name, results_dir)
         self.ranker = ranker
         self.bioactive_threshold = bioactive_threshold
@@ -54,7 +72,16 @@ class RankerEvaluator(Evaluator):
 
     def evaluate_library(self,
                          cel: ConfEnsembleLibrary,
-                         d_targets: Dict[str, List[Any]]):
+                         d_targets: Dict[str, List[Any]])-> None:
+        """Evaluate a library of conf ensemble
+
+        :param cel: Conf ensemble library
+        :type cel: ConfEnsembleLibrary
+        :param d_targets: Dict storing the target value for each conformer. Must
+            be of the form {ensemble_name: [target1, ..., targetN]} where
+            ensemble_name molecule in cel has N conformers
+        :type d_targets: Dict[str, List[Any]]
+        """
         assert cel.library.keys() == d_targets.keys()
             
         ranker_mol_results = {}
@@ -80,16 +107,17 @@ class RankerEvaluator(Evaluator):
     
     def evaluate_mol(self,
                      mol: Mol,
-                     targets: Sequence[float]):
-        
-        input_list = self.ranker.get_input_list_from_mol(mol)   
-        all_mol_results, all_conf_results = self.evaluate_input_list(input_list, targets)
-        return all_mol_results, all_conf_results
-               
-               
-    def evaluate_input_list(self,
-                            input_list,
-                            targets):
+                     targets: Sequence[float],
+                     )-> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """Evaluate a single molecule containing conformers
+
+        :param mol: Input molecule
+        :type mol: Mol
+        :param targets: Corresponding target values for each Conformer in mol
+        :type targets: List[Any]
+        :return: Mol level and conformer level results
+        :rtype: Tuple[Dict[str, Any], Dict[str, Any]]
+        """
         
         try:
         
@@ -97,11 +125,22 @@ class RankerEvaluator(Evaluator):
             all_conf_results = {}
             
             # Including bioactive confs
-            values = self.ranker.get_values(input_list)
+            
+            if isinstance(self.ranker, TFD2SimRefMCSRanker):
+                input_list, mcs_smarts = self.ranker.get_input_list_for_mol(mol,
+                                                                            return_mcs=True)
+                mcs = Chem.MolFromSmarts(mcs_smarts)
+                all_mol_results['MCS_smarts'] = mcs_smarts
+                all_mol_results['MCS_size'] = mcs.GetNumHeavyAtoms()
+                values = self.ranker.get_values_for_input_list(input_list)
+            else:
+                values = self.ranker.get_values_for_mol(mol)
+                
             ranks = self.ranker.get_ranks(values)
             rmsds = targets
             rmsds = np.array(rmsds)
             
+            all_conf_results['values'] = values.tolist()
             all_conf_results['all_ranks'] = ranks.tolist()
             
             if isinstance(self.ranker, ModelRanker) :
@@ -113,7 +152,7 @@ class RankerEvaluator(Evaluator):
             
             is_bioactive = rmsds == 0
             
-            if np.sum(is_bioactive) > 0 and self.ranker.name != 'CCDC':
+            if np.sum(is_bioactive) > 0:
                 bioactive_results = self.get_bioactive_ranking(values,
                                                             ranks,
                                                             is_bioactive)
@@ -142,6 +181,8 @@ class RankerEvaluator(Evaluator):
             all_conf_results['bioactive_like_idxs'] = bioactive_like_idxs.tolist()
             all_conf_results['non_bioactive'] = non_bioactive_idxs.tolist()
             
+            # import pdb;pdb.set_trace()
+            
             for label, mask_idxs in d_mask_idxs.items():
                 n_labelled = mask_idxs.shape[0]
                 ratio = n_labelled / rmsds.shape[0]
@@ -165,7 +206,23 @@ class RankerEvaluator(Evaluator):
                          values: Sequence[float],
                          ranks: Sequence[int],
                          mask: Sequence[bool],
-                         enrichment: bool = True):
+                         enrichment: bool = True,
+                         ) -> Dict[str, Any]:
+        """Evaluates the ranking (early enrichment mostly) of boolean masked
+            samples
+
+        :param values: List of values for conformers
+        :type values: Sequence[float]
+        :param ranks: List of ranks for conformers
+        :type ranks: Sequence[int]
+        :param mask: Boolean masking. True represents labelled bioactive-like (or 
+            non-bioactive) conformers, False all the others
+        :type mask: Sequence[bool]
+        :param enrichment: Set to True to perform enrichment analysis, defaults to True
+        :type enrichment: bool, optional
+        :return: Dict of results
+        :rtype: Dict[str, Any]
+        """
         results = {}
         assert len(ranks) == len(mask)
         
@@ -183,10 +240,10 @@ class RankerEvaluator(Evaluator):
             results['normalized_first_rank'] = float(normalized_ranks.min())
             
             if enrichment:
-                results['ef'] = {}
-                results['normalized_ef'] = {}
-                results['old_normalized_ef'] = {}
-                results['recall'] = {}
+                # results['ef'] = {}
+                # results['normalized_ef'] = {}
+                # results['old_normalized_ef'] = {}
+                # results['recall'] = {}
                 
                 # transform into RDKit ranking metrics
                 values = np.array(values)
@@ -196,34 +253,34 @@ class RankerEvaluator(Evaluator):
                 sorted_mask = mask[sorting]
                 ranked_list = np.array(list(zip(sorted_values, sorted_mask)))
                 
-                old_max_ef = n_confs / n_masked
-                for fraction in self.ef_fractions :
-                    n_confs_fraction = int(n_confs * fraction)
-                    n_confs_fraction = max(n_confs_fraction, 1) # avoid division by zero
-                    best_ratio = min(n_masked, n_confs_fraction) / n_confs_fraction
-                    max_ef = best_ratio / (n_masked / n_confs)
-                    ef_result = CalcEnrichment(ranked_list, 
-                                                col=1, 
-                                                fractions=[fraction])
-                    if not len(ef_result) :
-                        if fraction < 0.5:
-                            import pdb;pdb.set_trace()
-                        ef = 1
-                    else :
-                        ef = ef_result[0]
-                    normalized_ef = ef / max_ef
+                # old_max_ef = n_confs / n_masked
+                # for fraction in self.ef_fractions :
+                #     n_confs_fraction = int(n_confs * fraction)
+                #     n_confs_fraction = max(n_confs_fraction, 1) # avoid division by zero
+                #     best_ratio = min(n_masked, n_confs_fraction) / n_confs_fraction
+                #     max_ef = best_ratio / (n_masked / n_confs)
+                #     ef_result = CalcEnrichment(ranked_list, 
+                #                                 col=1, 
+                #                                 fractions=[fraction])
+                #     if not len(ef_result) :
+                #         if fraction < 0.5:
+                #             import pdb;pdb.set_trace()
+                #         ef = 1
+                #     else :
+                #         ef = ef_result[0]
+                #     normalized_ef = ef / max_ef
                     
-                    results['ef'][fraction] = ef
-                    results['normalized_ef'][fraction] = normalized_ef
+                #     results['ef'][fraction] = ef
+                #     results['normalized_ef'][fraction] = normalized_ef
                     
-                    old_normalized_df = ef / old_max_ef
-                    results['old_normalized_ef'][fraction] = old_normalized_df
+                #     old_normalized_df = ef / old_max_ef
+                #     results['old_normalized_ef'][fraction] = old_normalized_df
                     
-                    i = int(np.ceil(n_confs * fraction))
-                    fraction_ranks = ranks[:i]
-                    ratio_mask = np.isin(fraction_ranks, mask_ranks).sum()
-                    recall = ratio_mask / n_masked
-                    results['recall'][fraction] = recall
+                #     i = int(np.ceil(n_confs * fraction))
+                #     fraction_ranks = ranks[:i]
+                #     ratio_mask = np.isin(fraction_ranks, mask_ranks).sum()
+                #     recall = ratio_mask / n_masked
+                #     results['recall'][fraction] = recall
                     
                 bedroc = CalcBEDROC(ranked_list, col=1, alpha=20)
                 results['bedroc'] = bedroc
@@ -236,9 +293,22 @@ class RankerEvaluator(Evaluator):
         return results
                                  
     def get_bioactive_ranking(self,
-                              values,
-                              ranks,
-                              is_bioactive):
+                              values: Sequence[float],
+                              ranks: Sequence[float],
+                              is_bioactive: Sequence[bool],
+                              ) -> Dict[str, Any] :
+        """Get ranking analysis of bioactive conformations
+
+        :param values: List of values for conformers
+        :type values: Sequence[float]
+        :param ranks: List of ranks for conformers
+        :type ranks: Sequence[int]
+        :param is_bioactive: Boolean masking. True represents labelled bioactive
+            conformations, False all the others
+        :type is_bioactive: Sequence[bool]
+        :return: Dict of results
+        :rtype: Dict[str, Any]
+        """
         results = self.get_mask_ranking(values, 
                                         ranks, 
                                         mask=is_bioactive,
@@ -246,54 +316,61 @@ class RankerEvaluator(Evaluator):
         return results
 
 
-    def evaluate_subset(self,
-                        subset: Subset,
-                        mol_ids: List[str]):
+    # def evaluate_subset(self,
+    #                     subset: Subset,
+    #                     mol_ids: List[str]):
+    #     """Evaluates a subset of a ConfEnsembleDataset
+
+    #     :param subset: Subset of a ConfEnsembleDataset
+    #     :type subset: Subset
+    #     :param mol_ids: List of mol_ids in the conf ensemble dataset
+    #     :type mol_ids: List[str]
+    #     """
             
-        ranker_mol_results = {}
-        ranker_conf_results = {}
+    #     ranker_mol_results = {}
+    #     ranker_conf_results = {}
         
-        grouped_data, d_targets = self.group_by_name(subset, mol_ids)
-        assert grouped_data.keys() == d_targets.keys()
-        if isinstance(subset.dataset, E3FPDataset):
-            for name, fp_array in tqdm(grouped_data.items()):
-                targets = d_targets[name]
-                try:
-                    assert fp_array.shape[0] == len(targets)
-                    results = self.evaluate_input_list(input_list=fp_array,
-                                                    targets=targets)
-                    mol_results, conf_results = results
-                    ranker_mol_results[name] = mol_results
-                    ranker_conf_results[name] = conf_results
-                except Exception as e:
-                    print(f'Evaluation failed for {name}')
-                    print(str(e))
+    #     grouped_data, d_targets = self.group_by_name(subset, mol_ids)
+    #     assert grouped_data.keys() == d_targets.keys()
+    #     if isinstance(subset.dataset, E3FPDataset):
+    #         for name, fp_array in tqdm(grouped_data.items()):
+    #             targets = d_targets[name]
+    #             try:
+    #                 assert fp_array.shape[0] == len(targets)
+    #                 results = self.evaluate_input_list(input_list=fp_array,
+    #                                                 targets=targets)
+    #                 mol_results, conf_results = results
+    #                 ranker_mol_results[name] = mol_results
+    #                 ranker_conf_results[name] = conf_results
+    #             except Exception as e:
+    #                 print(f'Evaluation failed for {name}')
+    #                 print(str(e))
                 
-            # import pdb;pdb.set_trace()
+    #         # import pdb;pdb.set_trace()
                 
-            with open(self.ranker_mol_results_path, 'wb') as f:
-                pickle.dump(ranker_mol_results, f)
-            with open(self.ranker_conf_results_path, 'wb') as f:
-                pickle.dump(ranker_conf_results, f)
+    #         with open(self.ranker_mol_results_path, 'wb') as f:
+    #             pickle.dump(ranker_mol_results, f)
+    #         with open(self.ranker_conf_results_path, 'wb') as f:
+    #             pickle.dump(ranker_conf_results, f)
 
 
-    def group_by_name(self,
-                      subset,
-                      mol_ids):
-        grouped_data = defaultdict(list)
-        d_targets = defaultdict(list)
-        print('Grouping by name')
-        for mol_id, data in tqdm(zip(mol_ids, subset)):
-            fp_array, rmsd = data
-            name = mol_id.split('_')[0]
-            grouped_data[name].append(fp_array)
-            d_targets[name].append(rmsd.item())
+    # def group_by_name(self,
+    #                   subset,
+    #                   mol_ids):
+    #     grouped_data = defaultdict(list)
+    #     d_targets = defaultdict(list)
+    #     print('Grouping by name')
+    #     for mol_id, data in tqdm(zip(mol_ids, subset)):
+    #         fp_array, rmsd = data
+    #         name = mol_id.split('_')[0]
+    #         grouped_data[name].append(fp_array)
+    #         d_targets[name].append(rmsd.item())
             
-        if isinstance(subset.dataset, E3FPDataset):
-            print('Joining E3FP arrays')
-            for name, data_list in tqdm(grouped_data.items()):
-                grouped_data[name] = np.vstack(data_list)
-        return grouped_data, d_targets
+    #     if isinstance(subset.dataset, E3FPDataset):
+    #         print('Joining E3FP arrays')
+    #         for name, data_list in tqdm(grouped_data.items()):
+    #             grouped_data[name] = np.vstack(data_list)
+    #     return grouped_data, d_targets
             
 
         

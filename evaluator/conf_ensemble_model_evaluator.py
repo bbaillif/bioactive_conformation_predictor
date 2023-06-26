@@ -1,26 +1,34 @@
 import os
 import pickle
-import numpy as np
 import torch.nn.functional as F
 import torch
 
 from tqdm import tqdm
 from rdkit.Chem.rdchem import Mol
-from typing import List, Any, Dict, Sequence
+from typing import List, Any, Dict, Sequence, Tuple
 from conf_ensemble.conf_ensemble_library import ConfEnsembleLibrary
-from model import ConfEnsembleModel
+from model import ConfPredModel
 from .evaluator import Evaluator
 from torchmetrics import R2Score
 from scipy.stats import pearsonr
-
+from params import RESULTS_DIRPATH
 
 class ConfEnsembleModelEvaluator(Evaluator):
     
     def __init__(self, 
-                 model: ConfEnsembleModel,
+                 model: ConfPredModel,
                  evaluation_name: str,
-                 results_dir: str = '/home/bb596/hdd/pdbbind_bioactive/results/'
+                 results_dir: str = RESULTS_DIRPATH,
                  ) -> None:
+        """Evaluates the RMSD prediction task of the atomistic neural networks
+
+        :param model: Model predicting a value for a conformation
+        :type model: ConfPredModel
+        :param evaluation_name: Name of the current evaluation
+        :type evaluation_name: str
+        :param results_dir: Directory to store results, defaults to RESULTS_DIRPATH
+        :type results_dir: str, optional
+        """
         Evaluator.__init__(self, 
                            evaluation_name, 
                            results_dir)
@@ -39,7 +47,16 @@ class ConfEnsembleModelEvaluator(Evaluator):
             
     def evaluate_library(self,
                          cel: ConfEnsembleLibrary,
-                         d_targets: Dict[str, List[Any]]):
+                         d_targets: Dict[str, List[Any]]) -> None:
+        """Evaluate a library of conf ensemble
+
+        :param cel: Conf ensemble library
+        :type cel: ConfEnsembleLibrary
+        :param d_targets: Dict storing the target value for each conformer. Must
+            be of the form {ensemble_name: [target1, ..., targetN]} where
+            ensemble_name molecule in cel has N conformers
+        :type d_targets: Dict[str, List[Any]]
+        """
         
         assert cel.library.keys() == d_targets.keys()
             
@@ -66,7 +83,17 @@ class ConfEnsembleModelEvaluator(Evaluator):
             
     def evaluate_mol(self, 
                      mol: Mol,
-                     targets: List[Any]):
+                     targets: List[Any],
+                     )-> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """Evaluate a single molecule containing conformers
+
+        :param mol: Input molecule
+        :type mol: Mol
+        :param targets: Corresponding target values for each Conformer in mol
+        :type targets: List[Any]
+        :return: Mol level and conformer level results
+        :rtype: Tuple[Dict[str, Any], Dict[str, Any]]
+        """
         data_list = self.model.featurizer.featurize_mol(mol)
         mol_results, conf_results = self.evaluate_data_list(data_list, targets)
         return mol_results, conf_results
@@ -74,7 +101,17 @@ class ConfEnsembleModelEvaluator(Evaluator):
     
     def evaluate_data_list(self, 
                            data_list: List[Any],
-                           targets: List[Any]):
+                           targets: List[Any],
+                           ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """Evaluate a (torch geometric) Data list
+
+        :param data_list: Input data list
+        :type data_list: List[Any]
+        :param targets: Corresponding target for each input data point
+        :type targets: List[Any]
+        :return: Mol level and conformer level results
+        :rtype: Tuple[Dict[str, Any], Dict[str, Any]]
+        """
         
         preds = self.model.get_preds_for_data_list(data_list)
         preds = preds.cpu().squeeze()
@@ -85,7 +122,17 @@ class ConfEnsembleModelEvaluator(Evaluator):
     
     def evaluate_preds(self,
                        preds: Sequence[Any],
-                       targets: Sequence[Any]):
+                       targets: Sequence[Any]
+                       )-> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """Performs the regression analysis between predicted and target values
+
+        :param preds: Predicted values
+        :type preds: Sequence[Any]
+        :param targets: Target values
+        :type targets: Sequence[Any]
+        :return: Mol level and conformer level results
+        :rtype: Tuple[Dict[str, Any], Dict[str, Any]]
+        """
         
         try:
             if not isinstance(preds, torch.Tensor):

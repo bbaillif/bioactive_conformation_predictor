@@ -1,28 +1,49 @@
 import os
 import pandas as pd
 
-from rdkit import Chem
+from rdkit import Chem # safe import before ccdc imports
 from multiprocessing import Pool, TimeoutError
-from ..utils import CcdcRdkitConnector
+from data.utils import MolConverter
 from ccdc.conformer import ConformerGenerator, ConformerHitList
 from ccdc.molecule import Molecule
-from ccdc.io import MoleculeWriter
+from ccdc.io import MoleculeWriter, MoleculeReader
 from typing import Tuple
+from params import (BIO_CONF_DIRNAME,
+                    GEN_CONF_DIRNAME, 
+                    DATA_DIRPATH)
 
 class ConfGenerator() :
+    """Class to generate conformers for bioactive conformation (in PDBbind)
+    
+    :param gen_cel_name: Name of the conf ensemble library of generated
+        conformers, defaults to 'gen_conf_ensembles'
+    :type gen_cel_name: str, optional
+    :param root: Data directory
+    :type root: str, optional
+    """
     
     def __init__(self,
-                 gen_cel_name: str = 'gen_conf_ensembles',
-                 root: str = '/home/bb596/hdd/pdbbind_bioactive/data/') -> None:
+                 gen_cel_name: str = GEN_CONF_DIRNAME,
+                 root: str = DATA_DIRPATH) -> None:
+
         self.gen_cel_name = gen_cel_name
         self.root = root
         self.gen_cel_dir = os.path.join(self.root, self.gen_cel_name)
         if not os.path.exists(self.gen_cel_dir) :
             os.mkdir(self.gen_cel_dir)
-        self.ccdc_rdkit_connector = CcdcRdkitConnector()
+        self.mol_converter = MolConverter()
+    
     
     def generate_conf_for_library(self,
-                                  cel_name: str = 'pdb_conf_ensembles') :
+                                  cel_name: str = BIO_CONF_DIRNAME,
+                                  ) -> None:
+        """Generate conformers for input library
+
+        :param cel_name: Name of the bioactive conformations library
+            , defaults to 'pdb_conf_ensembles'
+        :type cel_name: str, optional
+        """
+        
         self.cel_name = cel_name
         self.cel_dir = os.path.join(self.root, self.cel_name)
         cel_df_path = os.path.join(self.cel_dir, 'ensemble_names.csv')
@@ -50,25 +71,29 @@ class ConfGenerator() :
             
             
     def generate_conf_thread(self, 
-                             params: Tuple[str, str, str]) :
+                             params: Tuple[str, str, str]) -> None:
         """
         Thread for multiprocessing Pool to generate confs for a molecule using
         the CCDC conformer generator. Default behaviour is to save all
-        generated confs in a dir, and initial+generated ensemble in a 'merged'
-        dir
-        Args:
-            params: Tuple[str, str] = SMILES and SDF file name of the molecule
-                to generate conformations for
+        generated confs in a dir (and initial+generated ensemble in a 'merged'
+        dir in an older version)
+        
+        :param params: name, SDF filename and SMILES of the molecule
+            to generate conformers for
+        :type params: Tuple[str, str, str]
         """
         
         name, filename, smiles = params
-        print(smiles)
+        # print(smiles)
         gen_file_path = os.path.join(self.gen_cel_dir,
                                          filename)
         if not os.path.exists(gen_file_path):
             try :
                 print('Generating for ' + name)
-                ccdc_mol = Molecule.from_string(smiles)
+                # ccdc_mol = Molecule.from_string(smiles)
+                filepath = os.path.join(self.cel_dir, filename)
+                reader = MoleculeReader(filepath)
+                ccdc_mol = reader[0]
                 
                 assert len(ccdc_mol.atoms) > 0
                 
@@ -76,7 +101,8 @@ class ConfGenerator() :
                 
                 writer = MoleculeWriter(gen_file_path)
                 for conformer in conformers:
-                    writer.write_molecule(conformer.molecule)
+                    conformer_mol = conformer.molecule
+                    writer.write_molecule(conformer_mol)
                     
             except Exception as e :
                 print(f'Generation failed for {name}')
@@ -85,17 +111,19 @@ class ConfGenerator() :
         return None
         
         
-    def generate_conf_for_mol(self, 
-                              ccdc_mol: Molecule,
+    @staticmethod
+    def generate_conf_for_mol(ccdc_mol: Molecule,
                               n_confs: int = 250) -> ConformerHitList:
         """
         Generate conformers for input molecule
-        Args:
-            ccdc_mol: Molecule = CCDC molecule to generate confs for
-            n_confs: int = maximum number of confs to generate
-        Returns:
-            ConformerHitList = confs for molecule
+        :param ccdc_mol: CCDC molecule to generate confs for
+        :type ccdc_mol: Molecule
+        :param n_confs: maximum number of confs to generate, defaults to 250
+        :type n_confs: int
+        :return: confs for molecule
+        :rtype: ConformerHitList
         """
+        
         conf_generator = ConformerGenerator()
         conf_generator.settings.max_conformers = n_confs
         conformers = conf_generator.generate(ccdc_mol)

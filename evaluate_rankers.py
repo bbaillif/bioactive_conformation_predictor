@@ -1,65 +1,45 @@
 import os
 import numpy as np
 import pandas as pd
+import copy
 
 from tqdm import tqdm
 from typing import Tuple, Dict, Sequence
 from conf_ensemble import ConfEnsembleLibrary, ConfEnsemble
 from evaluator.ranker_evaluator import RankerEvaluator
-from model import SchNetModel
-from data.split import RandomSplit, ScaffoldSplit, UclusterSplit
-from rankers.ccdc_ranker import CCDCRanker
-from rankers.model_ranker import ModelRanker
-from rankers.shuffle_ranker import ShuffleRanker
-from rankers.property_ranker import PropertyRanker
-from rankers.energy_ranker import EnergyRanker
-
-def get_model_from_checkpoint(experiment_name, data_split) :
-    checkpoint_dir = os.path.join('lightning_logs', experiment_name, 'checkpoints')
-    checkpoint_name = os.listdir(checkpoint_dir)[0]
-    checkpoint_path = os.path.join(checkpoint_dir, checkpoint_name)
-    config = {"num_interactions": 6,
-                "cutoff": 10,
-                "lr": 1e-5,
-                'batch_size': 256,
-                'data_split': data_split}
-    model = SchNetModel.load_from_checkpoint(checkpoint_path=checkpoint_path, config=config)
-    return model
-
-# Ligand conf ensemble based
-# def get_ce_and_targets(filename, root, pdb_ids):
-#     pdb_filepath = os.path.join(root, 'pdb_conf_ensembles_moe_all', filename)
-#     gen_filepath = os.path.join(root, 'gen_conf_ensembles_moe_all', filename)
-#     gen_ce = ConfEnsemble.from_file(gen_filepath)
-#     pdb_ce = ConfEnsemble.from_file(pdb_filepath)
-    
-#     pdb_indices = []
-#     confs = pdb_ce.mol.GetConformers()
-#     for i, conf in enumerate(confs):
-#         pdb_id = conf.GetProp('PDB_ID')
-#         if not pdb_id in pdb_ids:
-#             pdb_ce.mol.RemoveConformer(conf.GetId())
-#         else:
-#             pdb_indices.append(i)
-    
-#     rmsd_filepath = os.path.join(root, 'rmsds', filename.replace('.sdf', '.npy'))
-#     rmsds = np.load(rmsd_filepath)
-#     rmsds = rmsds[:, pdb_indices]
-#     min_rmsds = rmsds.min(1).tolist()
-    
-#     gen_ce.add_mol(pdb_ce.mol, standardize=False)
-#     min_rmsds.extend([0 for conf in pdb_ce.mol.GetConformers()])
-#     return gen_ce, min_rmsds
+from model import (AtomisticNNModel,
+                    SchNetModel, 
+                   DimeNetModel, 
+                   ComENetModel)
+from data.split import RandomSplit, ScaffoldSplit
+from rankers import (ConfRanker,
+                     NoRankingRanker,
+                     RandomRanker,
+                     EnergyRanker,
+                     SASARanker,
+                     RGyrRanker,
+                     ModelRanker,
+                     TFD2SimRefMCSRanker)
+from typing import List
+from params import (BIO_CONF_DIRPATH, 
+                    GEN_CONF_DIRPATH,
+                    RMSD_DIRPATH)
 
 # PDB ID based
-def get_ce_and_targets(filename, root, pdb_ids) -> Tuple[Dict[str, ConfEnsemble], Dict[str, Sequence]]:
-    pdb_filepath = os.path.join(root, 'pdb_conf_ensembles_moe_all', filename)
-    gen_filepath = os.path.join(root, 'gen_conf_ensembles_moe_all', filename)
-    pdb_ce = ConfEnsemble.from_file(pdb_filepath)
-    gen_ce = ConfEnsemble.from_file(gen_filepath)
+def get_ce_and_targets(filename: str, 
+                       pdb_ids: List[str]
+                       ) -> Tuple[Dict[str, ConfEnsemble], Dict[str, Sequence]]:
+    pdb_filepath = os.path.join(BIO_CONF_DIRPATH, 
+                                filename)
+    gen_filepath = os.path.join(GEN_CONF_DIRPATH,
+                                filename)
+    pdb_ce = ConfEnsemble.from_file(pdb_filepath, 
+                                    renumber_atoms=False)
+    gen_ce = ConfEnsemble.from_file(gen_filepath, 
+                                    renumber_atoms=False)
     
     pdb_idx_to_id = {}
-    confs = pdb_ce.mol.GetConformers()
+    confs = [conf for conf in pdb_ce.mol.GetConformers()]
     for i, conf in enumerate(confs):
         pdb_id = conf.GetProp('PDB_ID')
         if pdb_id in pdb_ids:
@@ -67,8 +47,8 @@ def get_ce_and_targets(filename, root, pdb_ids) -> Tuple[Dict[str, ConfEnsemble]
         else:
             pdb_ce.mol.RemoveConformer(conf.GetId())
             
-    
-    rmsd_filepath = os.path.join(root, 'rmsds', filename.replace('.sdf', '.npy'))
+    rmsd_filepath = os.path.join(RMSD_DIRPATH, 
+                                 filename.replace('.sdf', '.npy'))
     rmsds = np.load(rmsd_filepath)
     gen_ce_rmsds = {}
     gen_ces = {}
@@ -78,68 +58,75 @@ def get_ce_and_targets(filename, root, pdb_ids) -> Tuple[Dict[str, ConfEnsemble]
     return gen_ces, gen_ce_rmsds
 
 
-root = '/home/bb596/hdd/pdbbind_bioactive/data'
-cel_df = pd.read_csv(os.path.join(root, 
-                                  'pdb_conf_ensembles', 
+cel_df = pd.read_csv(os.path.join(BIO_CONF_DIRPATH,
                                   'ensemble_names.csv'))
-pdbbind_df = pd.read_csv(os.path.join(root,
-                                      'pdbbind_df.csv'))
+pdbbind_df = pd.read_csv(os.path.join(BIO_CONF_DIRPATH,
+                                      'pdb_df.csv'))
 
-# split_types = ['random', 'scaffold', 'protein']
-split_types = ['protein']
+master_cel = ConfEnsembleLibrary()
+
+common_rankers = [RandomRanker(),
+                  NoRankingRanker(), 
+                  EnergyRanker(),
+                  SASARanker(),
+                  RGyrRanker(),
+                  ]
+
+split_types = ['random', 'scaffold']
+split_is = range(5)
+
+model_classes: List[AtomisticNNModel] = [SchNetModel, 
+                                    DimeNetModel, 
+                                    ComENetModel]
+
 for split_type in split_types:
     
-    for split_i in range(5):
+    for split_i in split_is:
         
-        experiment_name = f'{split_type}_split_{split_i}'
-        print(experiment_name)
+        base_experiment_name = f'{split_type}_split_{split_i}'
+        print(base_experiment_name)
         
         if split_type == 'random':
             data_split = RandomSplit(split_i=split_i)
         elif split_type == 'scaffold' :
             data_split = ScaffoldSplit(split_i=split_i)
-        elif split_type == 'protein' :
-            data_split = UclusterSplit(split_type=split_type,
-                                       split_i=split_i)
+        
+        train_smiles = data_split.get_smiles('train')
         
         test_pdbs = data_split.get_pdb_ids('test')
         pdbbind_test_df = pdbbind_df[pdbbind_df['pdb_id'].isin(test_pdbs)]
-        
-        # test_smiles = data_split.get_smiles('test')
-        # test_df = cel_df[cel_df['smiles'].isin(test_smiles)]
+        cel_df_test = cel_df.merge(pdbbind_test_df, 
+                                   left_on='ensemble_name',
+                                   right_on='ligand_name')
         
         ce_dict = {}
         d_targets = {}
-        for i, row in tqdm(pdbbind_test_df.iterrows(), total=pdbbind_test_df.shape[0]):
-            name = row['ligand_name']
-            filename = cel_df[cel_df['ensemble_name'] == name]['filename'].values[0]
+        unique_filenames = cel_df_test['filename'].unique()
+        for filename in tqdm(unique_filenames):
             try:
-                gen_ces, targets = get_ce_and_targets(filename, root, test_pdbs)
-                
+                gen_ces, targets = get_ce_and_targets(filename,
+                                                      test_pdbs)
                 ce_dict.update(gen_ces)
                 d_targets.update(targets)
             except Exception as e:
-                print(f'Processing failed for {name}')
+                print(f'Processing failed for {filename}')
                 print(str(e))
         cel = ConfEnsembleLibrary.from_ce_dict(ce_dict, cel_name='test_random_0')
         
-        model = get_model_from_checkpoint(experiment_name, data_split)
+        train_cel = copy.deepcopy(master_cel)
+        train_cel.select_smiles_list(smiles_list=train_smiles)
+        tfd_ranker = TFD2SimRefMCSRanker(cel=train_cel)
         
-        rankers = [
-            ModelRanker(model, use_cuda=True),
-            CCDCRanker(),
-            ShuffleRanker(),
-            EnergyRanker(),
-            PropertyRanker('delta_u'),
-        ]
+        split_rankers: List[ConfRanker] = common_rankers + [tfd_ranker]
+        # split_rankers = [tfd_ranker]
         
-        # descriptor_names = ['delta_u', 'delta_e_sol', 'delta_e_hyd',
-        #                     'delta_e_hphi', 'delta_e_rgyr','E_sol', 'rgyr', 
-        #                     'ASA_H', 'ASA_P', 'original_delta_e_sol']
-        # descriptor_names = ['delta_u', 'delta_e_sol', 'E_sol']
-        # rankers.extend([PropertyRanker(name) for name in descriptor_names])
-
-        for ranker in rankers:
+        for ranker in split_rankers:
             print(ranker.name)
-            evaluator = RankerEvaluator(ranker, evaluation_name=experiment_name)
+            evaluator = RankerEvaluator(ranker, evaluation_name=base_experiment_name)
+            evaluator.evaluate_library(cel, d_targets)
+            
+        for model_class in model_classes:
+            model = model_class.get_model_for_data_split(data_split=data_split)
+            ranker = ModelRanker(model, use_cuda=True)
+            evaluator = RankerEvaluator(ranker, evaluation_name=base_experiment_name)
             evaluator.evaluate_library(cel, d_targets)

@@ -8,13 +8,17 @@ from rdkit import Chem
 from tqdm import tqdm
 from typing import List
 from .conf_ensemble_dataset import ConfEnsembleDataset
-from .pdbbind import PDBbindMetadataProcessor
-from .pdb_ligand_expo import PDBLigandExpo
-from .split.data_split import DataSplit
-from .rmsd_calculator import RMSDCalculator
-from featurizer import PyGFeaturizer
-from data.conf_generator import ConfGenerator
+from data.utils import (PDBbind, 
+                     LigandExpo)
+from data.split import DataSplit
+from data.preprocessing import (RMSDCalculator, ConfGenerator)
+from data.featurizer import PyGFeaturizer
 from conf_ensemble import ConfEnsembleLibrary
+from params import (DATA_DIRPATH,
+                    BIO_CONF_DIRNAME,
+                    GEN_CONF_DIRNAME,
+                    RMSD_DIRNAME,
+                    PDBBIND_DIRPATH)
 
 
 Chem.SetDefaultPickleProperties(Chem.PropertyPickleOptions.AllProps)
@@ -24,16 +28,38 @@ class PyGDataset(ConfEnsembleDataset, InMemoryDataset) :
     """
     Create a torch geometric dataset for each conformations in the default
     conf ensemble library (bio+gen)
-    Args:
-        :param root: Directory where library is stored
-        :type root: str
+    
+    :param cel_name: name of the bioactive conformations ensemble library, 
+        defaults to 'pdb_conf_ensembles'
+    :type cel_name: str, optional
+    :param gen_cel_name: name of the generated conformers ensemble library, 
+        defaults to 'gen_conf_ensembles'
+    :type gen_cel_name: str, optional
+    :param rmsd_name: name of the directory storing rmsd between bioactive
+        conformations and generated conformers, defaults to 'rmsds'
+    :type rmsd_name: str, optional
+    :param root: Data directory,
+    :type root: str, optional
     """
     
     def __init__(self,
-                 root: str = '/home/bb596/hdd/pdbbind_bioactive/data/'):
+                 cel_name: str = BIO_CONF_DIRNAME,
+                 gen_cel_name: str = GEN_CONF_DIRNAME,
+                 rmsd_name: str = RMSD_DIRNAME,
+                 root: str = DATA_DIRPATH,
+                 ) -> None:
         
         ConfEnsembleDataset.__init__(self, 
+                                     cel_name=cel_name,
+                                     gen_cel_name=gen_cel_name,
                                      root=root)
+        self.rmsd_name = rmsd_name
+        self.rmsd_dir = os.path.join(root, rmsd_name)
+        
+        # Creates the bioactive and generated conf ensemble libraries
+        # And compute RMSD to bioactive
+        if not os.path.exists(self.rmsd_dir):
+            self.preprocess()
         
         # pdbbind_df_path = os.path.join(self.root, 'pdbbind_df.csv')
         # self.pdbbind_df = pd.read_csv(pdbbind_df_path)
@@ -57,23 +83,62 @@ class PyGDataset(ConfEnsembleDataset, InMemoryDataset) :
         return [f'pdbbind_data.pt']
     
     
-    def process(self):
-        """
-        Creates the dataset from the default library
+    def preprocess(self) -> None:
+        """Preprocess data to prepare for the process function
         """
         
-        # Creates the bioactive and generated conf ensemble libraries
-        # self.preprocess()
+        pdbbind = PDBbind(root=PDBBIND_DIRPATH,
+                            remove_unknown_ligand_name=True,
+                            remove_unknown_uniprot=True)
+        pdbbind_table = pdbbind.get_master_dataframe()
+        
+        ligand_expo = LigandExpo()
+
+        pdbbind_ligands = pdbbind.get_ligands()
+        print(len(pdbbind_ligands))
+
+        d = {}
+        for ligand in pdbbind_ligands :
+            pdb_id = ligand.GetConformer().GetProp('PDB_ID')
+            ligand_name = pdbbind_table[pdbbind_table['PDB code'] == pdb_id]['ligand name'].values[0]
+            # Start the ensemble with the standard ligand that will act as template
+            if not ligand_name in d :
+                standard_ligand = ligand_expo.get_standard_ligand(ligand_name)
+                d[ligand_name] = [standard_ligand]
+            d[ligand_name].append(ligand)
+                
+        d.pop('YNU') # YNU ligands freezes the CCDC conformer generator 
+                
+        cel = ConfEnsembleLibrary.from_mol_dict(mol_dict=d)
+        cel.save()
+
+        cg = ConfGenerator()
+        cg.generate_conf_for_library()
+        
+        rc = RMSDCalculator()
+        rc.compute_rmsd_matrices()
+    
+    
+    def process(self) -> None:
+        """
+        Creates the dataset from the bioactive+generated conf ensemble libraries
+        """
         
         # Start generating data
         all_data_list = []
         self.mol_ids = []
         
+        self.cel_df = pd.read_csv(self.cel_df_path)
+        
         for i, row in tqdm(self.cel_df.iterrows(), total=self.cel_df.shape[0]) :
             name = row['ensemble_name']
             filename = row['filename']
             try :
-                ce = self.get_merged_ce(filename, name) # Merge bio + conf ensembles
+                # Merge bio + conf ensembles
+                ce = ConfEnsembleLibrary.get_merged_ce(filename, 
+                                                       name,
+                                                       cel_name1=self.cel_name,
+                                                       cel_name2=self.gen_cel_name) 
                 mol = ce.mol
             
                 mol_ids = self.compute_mol_ids(mol, name) # Give ids to recognize each conf
@@ -93,46 +158,21 @@ class PyGDataset(ConfEnsembleDataset, InMemoryDataset) :
         torch.save(self.collate(all_data_list), self.processed_paths[0])
             
             
-    def preprocess(self):
-        
-        pmp = PDBbindMetadataProcessor(root='/home/bb596/hdd/PDBBind/',
-                                       remove_unknown_ligand_name=True,
-                                       remove_unknown_uniprot=True)
-        pdbbind_table = pmp.get_master_dataframe()
-        
-        ple = PDBLigandExpo()
-
-        pdbbind_ligands = pmp.get_ligands()
-        print(len(pdbbind_ligands))
-
-        d = {}
-        for ligand in pdbbind_ligands :
-            pdb_id = ligand.GetConformer().GetProp('PDB_ID')
-            ligand_name = pdbbind_table[pdbbind_table['PDB code'] == pdb_id]['ligand name'].values[0]
-            # Start the ensemble with the standard ligand that will act as template
-            if not ligand_name in d :
-                standard_ligand = ple.get_standard_ligand(ligand_name)
-                d[ligand_name] = [standard_ligand]
-            d[ligand_name].append(ligand)
-                
-        d.pop('YNU') # YNU ligands freezes the CCDC conformer generator 
-                
-        cel = ConfEnsembleLibrary.from_mol_dict(mol_dict=d)
-        cel.save()
-        cel.create_pdbbind_df()
-
-        cg = ConfGenerator()
-        cg.generate_conf_for_library()
-        
-        rc = RMSDCalculator()
-        rc.compute_rmsd_matrices()
-            
-            
     def add_bioactive_rmsds(self,
                             data_split: DataSplit,
-                            subset_name: str) :
-        data_split.set_dataset(self)
-        rmsd_df = data_split.get_bioactive_rmsds(subset_name)
+                            subset_name: str) -> None:
+        """Adds the bioactive rmsds to the dataset, based on precomputed rmsd
+        files in the rmsd_name directory. Depending on the proteins in the 
+        current set, the RMSD might be different, hence the choice
+        of inputing the data split in that function
+
+        :param data_split: Data split used in the modeling. 
+        :type data_split: DataSplit
+        :param subset_name: Name of the subset. train, val or test
+        :type subset_name: str
+        """
+        rmsd_df = data_split.get_bioactive_rmsds(mol_id_df=self.mol_id_df,
+                                                 subset_name=subset_name)
         df = self.mol_id_df.merge(rmsd_df.reset_index(), 
                                   on='mol_id',
                                   how='left') # in case RMSD is not defined for splits of a subset of the whole dataset (e.g. kinases)

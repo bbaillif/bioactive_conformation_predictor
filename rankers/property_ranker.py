@@ -1,7 +1,7 @@
 import numpy as np
 
 from .conf_ranker import ConfRanker
-from rdkit.Chem.rdchem import Mol
+from rdkit.Chem import Mol
 from typing import List, Any, Sequence
 
 class PropertyRanker(ConfRanker):
@@ -15,13 +15,13 @@ class PropertyRanker(ConfRanker):
         self.ascending = ascending
 
 
-    def get_input_list_from_mol(self,
+    def get_input_list_for_mol(self,
                                mol: Mol) -> List[Any]:
         input_list = [conf for conf in mol.GetConformers()]
         return input_list
 
 
-    def get_values(self,
+    def compute_values(self,
                    input_list) -> Sequence[float]:
         try:
             confs = input_list

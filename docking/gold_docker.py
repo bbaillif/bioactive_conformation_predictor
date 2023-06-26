@@ -1,10 +1,9 @@
 import os
 import time
 
-from rdkit import Chem
+from rdkit import Chem # safe before ccdc imports
 from ccdc.docking import Docker
 from ccdc.io import MoleculeReader
-from ccdc_rdkit_connector import CcdcRdkitConnector
 from ccdc.io import Entry, Molecule, MoleculeWriter
 from ccdc.protein import Protein
 from typing import Tuple, Union
@@ -44,7 +43,7 @@ class GOLDDocker() :
                  protein_path: str,
                  native_ligand_path: str,
                  experiment_id: str,
-                 output_dir: str = 'gold_docking_dude',
+                 output_dir: str,
                  prepare_protein: bool = False,
                  binding_site_distance: float = 6, # default value in CSD GOLD Python API
                  early_termination: bool = False,
@@ -76,8 +75,6 @@ class GOLDDocker() :
                                        #'NO_GOLD_SOLN_LIGAND_MOL2_FILES']
 
         self.ligand_preparation = Docker.LigandPreparation()
-        
-        self.ccdc_rdkit_connector = CcdcRdkitConnector()
         
         if self.prepare_protein :
             
@@ -125,11 +122,12 @@ class GOLDDocker() :
     def dock_molecule(self, 
                       ccdc_mol: Molecule,
                       mol_id: str,
-                      n_poses: int=20,
-                      rigid: bool=False,
-                      return_runtime: bool=False,
+                      n_poses: int = 20,
+                      rigid: bool = False,
+                      return_runtime: bool = False,
+                      overwrite: bool = False
                       ) -> Union[Docker.Results,
-                                 Tuple(Docker.Results, float)]:
+                                 Tuple[Docker.Results, float]]:
         """Dock a single molecule using GOLD. Actually creates a list of one
         molecule to dock with the dock_molecules function.
         
@@ -144,6 +142,8 @@ class GOLDDocker() :
         :type rigid: bool
         :param return_runtime: Whether or not to return docking runtime
         :type return_runtime: bool
+        :param overwrite: if the molecule has been docked before, erase and recreate
+        :type overwrite: bool
         :return: docking results and runtime if asked
         :rtype: Docker.Results (and float if return_runtime)
         """
@@ -151,16 +151,18 @@ class GOLDDocker() :
                                     mol_id=mol_id,
                                     n_poses=n_poses,
                                     rigid=rigid,
-                                    return_runtime=return_runtime)
+                                    return_runtime=return_runtime,
+                                    overwrite=overwrite)
 
     def dock_molecules(self, 
                       ccdc_mols: Molecule,
                       mol_id: str,
-                      n_poses: int=20,
-                      rigid: bool=False,
-                      return_runtime: bool=False,
+                      n_poses: int = 20,
+                      rigid: bool = False,
+                      return_runtime: bool = False,
+                      overwrite: bool = False,
                       ) -> Union[Docker.Results,
-                                 Tuple(Docker.Results, float)]:
+                                 Tuple[Docker.Results, float]]:
         """Dock molecules using GOLD 
         
         :param ccdc_mols: Molecules to dock
@@ -174,6 +176,8 @@ class GOLDDocker() :
         :type rigid: bool
         :param return_runtime: Whether or not to return docking runtime
         :type return_runtime: bool
+        :param overwrite: if the molecules has been docked before, erase and recreate
+        :type overwrite: bool
         :return: docking results and runtime if asked
         :rtype: Docker.Results (and float if return_runtime)
         """
@@ -197,7 +201,7 @@ class GOLDDocker() :
         self.settings.output_file = poses_output_file
 
         # Only perform docking if not done
-        if not os.path.exists(poses_output_file) :
+        if not os.path.exists(poses_output_file) or overwrite:
 
             for conf_id, ccdc_mol in enumerate(ccdc_mols) :
                 ligand_file = os.path.join(mol_output_dir, 
@@ -243,7 +247,7 @@ class GOLDDocker() :
                        n_poses: int,
                        ):
         """
-        Prepare a given molecule for docking in Gold
+        Prepare a given molecule for docking in GOLD
         
         :param ccdc_mol: Input molecule to dock
         :type ccdc_mol: Molecule
@@ -253,7 +257,8 @@ class GOLDDocker() :
         :type n_poses: int
         """
         
-        ligand = self.ligand_preparation.prepare(Entry.from_molecule(ccdc_mol))
+        ligand_entry = Entry.from_molecule(ccdc_mol)
+        ligand = self.ligand_preparation.prepare(ligand_entry)
         mol2_string = ligand.to_string(format='mol2')
         with open(ligand_file, 'w') as writer :
             writer.write(mol2_string)

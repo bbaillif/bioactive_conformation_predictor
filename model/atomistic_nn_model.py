@@ -1,25 +1,26 @@
-import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
+import os
 
 from rdkit import Chem # safe import before any ccdc import
-from rdkit.Chem.rdchem import Mol
+from rdkit.Chem import Mol
 
 from torch_scatter import scatter
-from data import PyGDataset
-from featurizer import PyGFeaturizer
+from data.dataset import PyGDataset
+from data.featurizer import PyGFeaturizer
 from torch_geometric.data import Batch, Data
 # Differentiate PyGDataLoader and torch DataLoader
 from torch_geometric.loader import DataLoader as PyGDataLoader
-from torch.utils.data import DataLoader
-from mol_drawer import MolDrawer
-from data.split import DataSplit
+from misc.mol_drawer import MolDrawer
 from typing import Any, Dict, List
-from model.conf_ensemble_model import ConfEnsembleModel
+from model.conf_pred_model import ConfPredModel
 from .atomistic import AtomisticNN
+from abc import abstractclassmethod
+from data.split import DataSplit
+from params import LOG_DIRPATH
 
 
-class AtomisticNNModel(ConfEnsembleModel):
+class AtomisticNNModel(ConfPredModel):
     """
     Uses an atomistic neural network (NN) as a model to process an input conformation 
     to obtain a predicted value. In current work, we try to predict the ARMSD to 
@@ -36,12 +37,21 @@ class AtomisticNNModel(ConfEnsembleModel):
     
     def __init__(self, 
                  config: Dict[str, Any],
-                 atomisctic_nn: AtomisticNN):
-        ConfEnsembleModel.__init__(self, config)
+                 atomistic_nn: AtomisticNN):
+        ConfPredModel.__init__(self, config)
         self.data_split = config['data_split']
         
-        self.atomisctic_nn = atomisctic_nn
+        self.atomistic_nn = atomistic_nn
         self.leaky_relu = torch.nn.LeakyReLU()
+    
+    
+    @property
+    def name(self) -> str:
+        """
+        :return: Name of the model
+        :rtype: str
+        """
+        return 'AtomisticNNModel'
     
     
     @property
@@ -68,14 +78,15 @@ class AtomisticNNModel(ConfEnsembleModel):
         """
         atomic_contributions = self.get_atomic_contributions(batch)
         pred = scatter(atomic_contributions, batch.batch, 
-                       dim=0, reduce=self.atomisctic_nn.readout)
+                       dim=0, reduce=self.atomistic_nn.readout)
         pred = self.leaky_relu(pred)
         return pred
 
 
     def record_loss(self,
                     batch: Batch,
-                    loss_name: str = 'train_loss') -> torch.Tensor:
+                    loss_name: str = 'train_loss'
+                    ) -> torch.Tensor:
         """
         Perform forward pass and records then returns the loss.
         Loss is MSELoss
@@ -90,6 +101,7 @@ class AtomisticNNModel(ConfEnsembleModel):
         """
         pred = self.forward(batch)
         y = batch.rmsd
+        # y = batch.armsd
         
         # ARMSD can be -1 in case of error in splitting
         if not torch.all(y >= 0):
@@ -100,7 +112,7 @@ class AtomisticNNModel(ConfEnsembleModel):
 
 
     def get_preds_for_data_list(self,
-                                data_list: List[Data]):
+                                data_list: List[Data]) -> None:
         """
         Get predictions for data_list (output from featurizer)
         
@@ -207,13 +219,13 @@ class AtomisticNNModel(ConfEnsembleModel):
         :return: Atomic contributions
         :rtype: torch.Tensor (n_atoms)
         """
-        return self.atomisctic_nn(batch.x.squeeze().long(), 
+        return self.atomistic_nn(batch.x.squeeze().long(), 
                                   batch.pos, 
                                   batch.batch)
          
          
     def show_atomic_contributions(self, 
-                                  mol, 
+                                  mol: Mol, 
                                   save_dir: str=None) :
         """
         Draw atomic contributions for a molecule in a directory:
@@ -232,14 +244,69 @@ class AtomisticNNModel(ConfEnsembleModel):
         atomic_contributions = atomic_contributions
         for batch_i in batch.batch.unique() :
             pred_is = atomic_contributions[batch.batch == batch_i]
-            pred_is = pred_is.numpy().reshape(-1)
+            pred_is = pred_is.cpu().numpy().reshape(-1)
             
             MolDrawer().plot_values_for_mol(mol=mol,
                                             values=pred_is,
                                             suffix=batch_i,
                                             save_dir=save_dir)
 
+
+    @staticmethod
+    def get_model_log_name(data_split: DataSplit,
+                           model_name: str):
+        split_type = data_split.split_type
+        split_i = data_split.split_i
+        log_name = f'{split_type}_split_{split_i}_{model_name}'
+        return log_name
+
+
+    @classmethod
+    def _get_model_for_data_split(cls,
+                                 data_split: DataSplit,
+                                 model_name: str,
+                                 config: Dict[str, Any],
+                                 log_dir: str = LOG_DIRPATH) -> 'AtomisticNNModel':
+        """Get trained model for data split
+
+        :param data_split: Data split
+        :type data_split: DataSplit
+        :param config: Configuration (parameter and value) for the model
+        :type config: Dict[str, Any]
+        :param log_dir: Directory where training log are stored
+        :type log_dir: str, optional
+        :return: Trained model
+        :rtype: AtomisticNNModel
+        """
         
+        log_name = cls.get_model_log_name(data_split,
+                                          model_name)
+        checkpoint_dirname = os.path.join(log_dir,
+                                          log_name,
+                                          'checkpoints')
+        checkpoint_filename = os.listdir(checkpoint_dirname)[0]
+        checkpoint_path = os.path.join(checkpoint_dirname,
+                                                  checkpoint_filename)
+        model = cls.load_from_checkpoint(checkpoint_path=checkpoint_path, 
+                                                    config=config)
+        return model
+
     
+    @abstractclassmethod
+    def get_model_for_data_split(cls,
+                                 data_split: DataSplit,
+                                 log_dir: str = LOG_DIRPATH
+                                 ) -> 'AtomisticNNModel':
+        """Get the trained model for a given data split
+
+        :param data_split: Data split
+        :type data_split: DataSplit
+        :param log_dir: Directory where training log are stored
+        :type log_dir: str, optional
+        :return: Trained model
+        :rtype: AtomisticNNModel
+        """
+        pass
         
 
+    

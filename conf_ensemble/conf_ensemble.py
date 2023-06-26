@@ -1,13 +1,14 @@
 import os
+import time
 
-from typing import List
+from typing import List, Union
 from rdkit import Chem
 from rdkit.Chem import SDWriter
-from rdkit.Chem.rdchem import Mol, Conformer
-from mol_standardizer import MolStandardizer
+from rdkit.Chem.rdchem import Mol
+from rdkit.Chem.rdFMCS import FindMCS
+from data.preprocessing import MolStandardizer
 from rdkit.Chem.AllChem import AssignBondOrdersFromTemplate
-
-from pose_reader import PoseReader
+from data.pose_reader import PoseReader
 
 class ConfEnsemble() :
     """
@@ -21,8 +22,14 @@ class ConfEnsemble() :
     :param name: name of the ensemble. Default is template molecule smiles
     :type name: str
     :param template_mol: Molecule to serve as template, all new molecule to add
-        will match this template (useful when you have a single 2D template i.e.
-        PDB ligand expo)
+        will match this template (useful when you have a single 2D template)
+    :type template_mol: Mol
+    :param standardize: Uses molvs to standardize the molecular graph if True 
+        (careful as this step removes hydrogens if input contains hydrogens)
+    :type standardize: bool
+    :param renumber_atoms: Set True if molecules do not have the same atom order
+        and require to match atoms between template and new molecules
+    :type renumber_atoms: bool
     
     """
     
@@ -30,7 +37,8 @@ class ConfEnsemble() :
                  mol_list: List[Mol],
                  name: str = None,
                  template_mol: Mol = None,
-                 standardize: bool = True) -> None:
+                 standardize: bool = True,
+                 renumber_atoms: bool = True) -> None:
         self.name = name
         
         if template_mol is None:
@@ -47,20 +55,28 @@ class ConfEnsemble() :
         self.mol = template_mol
         
         for mol in mol_list :
-            self.add_mol(mol, standardize)
+            self.add_mol(mol, standardize, renumber_atoms)
             
         self.mol.SetProp('_Name', name)
             
                         
     def add_mol(self,
                 mol: Mol,
-                standardize: bool = True) :
+                standardize: bool = True,
+                renumber_atoms: bool = True) -> None :
         """
-        Add molecule to the ensemble. Molecule must be the same as the template,
-        only conf should be different
+        Add molecule to the ensemble. Molecule must be the same (graph) as the 
+        template, only conformers should be different
         
         :param mol: Molecule to add
         :type mol: Mol
+        :param standardize: Uses molvs to standardize the molecular graph if True 
+            (careful as this step removes hydrogens if input contains hydrogens)
+        :type standardize: bool
+        :param renumber_atoms: Set True if molecules do not have the same atom order
+            and require to match atoms between template and new molecules
+        :type renumber_atoms: bool
+        
         """
         
         if standardize:
@@ -68,15 +84,36 @@ class ConfEnsemble() :
         else:
             standard_mol = mol
             
-        match = standard_mol.GetSubstructMatch(self.mol)
-        if len(match) != self.mol.GetNumHeavyAtoms() :
-            # Try using bond order assignement
-            standard_mol = AssignBondOrdersFromTemplate(self.mol, standard_mol)
-            match = standard_mol.GetSubstructMatch(self.mol)
-            if not len(match) == self.mol.GetNumAtoms() :
-                raise Exception('No match found between template and actual mol')
+        if renumber_atoms:
+            mcs = FindMCS([self.mol, mol])
+            mcs_mol = Chem.MolFromSmarts(mcs.smartsString)
+            match = standard_mol.GetSubstructMatch(mcs_mol)
+            if len(match) != self.mol.GetNumHeavyAtoms() :
+                # Try using bond order assignement
+                standard_mol = AssignBondOrdersFromTemplate(self.mol, standard_mol)
+                mcs = FindMCS([self.mol, mol])
+                mcs_mol = Chem.MolFromSmarts(mcs.smartsString)
+                match = standard_mol.GetSubstructMatch(mcs_mol)
+                if not len(match) == self.mol.GetNumAtoms() :
+                    raise Exception('No match found between template and actual mol')
             
-        renumbered_mol = Chem.RenumberAtoms(standard_mol, match)
+            self_match = self.mol.GetSubstructMatch(mcs_mol)
+            assert len(match) == len(self_match)
+            self2mcs = {res: idx for idx, res in enumerate(self_match)}
+            self2new = {idx: match[res] for idx, res in self2mcs.items()}
+            new_match = []
+            for i in range(len(self2new)):
+                new_match.append(self2new[i])
+            # new_match: nparray such that new_match[self_mol_index] = new_mol_index
+    
+            # reverse_self_match = {i_mcs: i_self for i_self, i_mcs in enumerate(self_match)}
+            # new_match = [reverse_self_match[i_mcs] for i_mcs in match]
+            
+            renumbered_mol = Chem.RenumberAtoms(standard_mol, new_match)
+            
+        else:
+            renumbered_mol = standard_mol
+            
         for new_conf in renumbered_mol.GetConformers() :
             conf_id = new_conf.GetId()
             original_conf = standard_mol.GetConformer(conf_id)
@@ -92,34 +129,74 @@ class ConfEnsemble() :
     def from_file(cls,
                   filepath: str,
                   name: str = None,
-                  output: str = 'conf_ensemble',
-                  standardize: bool = False) -> 'ConfEnsemble':
+                  standardize: bool = False,
+                  renumber_atoms: bool = False,
+                  embed_hydrogens: bool = True,
+                  docked_poses: bool = False,
+                  output_type: str = 'conf_ensemble',
+                  ) -> Union['ConfEnsemble', List[Mol]]:
         """
-        Constructor to create a conf ensemble from a sdf file
+        Constructor to create a conf ensemble from a molecule file. Accepted
+        file formats are sdf and mol2
         
         :param filepath: path to the sdf file containing multiple confs of the
         same molecule
         :type filepath: str
         :param name: name of the ensemble
         :type name: str
+        :param standardize: Uses molvs to standardize the molecular graph if True 
+            (careful as this step removes hydrogens if input contains hydrogens)
+        :type standardize: bool
+        :param renumber_atoms: Set True if molecules do not have the same atom order
+            and require to match atoms between template and new molecules
+        :type renumber_atoms: bool
+        :param embed_hydrogens: Set True if you want the conformer ensemble to 
+        keep hydrogens, set to False if you want to remove hydrogens
+        :type embed_hydrogens: bool
+        :param docked_poses: Set to True if the input are output poses from 
+        GOLD. This case needs a special PoseReader class to efficiently read the
+        GOLD properties from the mol2 output
+        :param output_type: Type of the output of this function. Default
+        behaviour is to produce a ConfEnsemble. Setting to mol_list returns the 
+        molecule list (useful for debug purposes)
+        :type output_type: str
+        
+        :return: 
+        
         """
         
-        if filepath.endswith('.sdf'):
-            with open(filepath, 'rb') as f:
-                suppl = Chem.ForwardSDMolSupplier(f)
-                mol_list = [mol for mol in suppl]
-        else:
+        assert output_type in ['conf_ensemble', 'mol_list'], \
+            'Output type must be either conf_ensemble or mol_list'
+            
+        file_format = filepath.split('.')[-1]
+        assert file_format in ['sdf', 'mol2'], \
+            'File format must be sdf or mol2'
+        
+        removeHs = not embed_hydrogens
+        
+        if docked_poses:
             suppl = PoseReader(filepath)
             mol_list = [mol for mol in suppl]
+        elif file_format == 'sdf':
+            with open(filepath, 'rb') as f:
+                suppl = Chem.ForwardSDMolSupplier(f, removeHs=removeHs)
+                mol_list = [mol for mol in suppl]
+        elif file_format == 'mol2':
+            mol_list = [Chem.MolFromMol2File(filepath)]
             
         def mol_props_to_conf(mol) :
-            prop_names = mol.GetPropNames(includePrivate=True, 
-                                         includeComputed=True)
-            for prop in prop_names :
-                value = mol.GetProp(prop)
-                for conf in mol.GetConformers() :
-                    conf.SetProp(prop, str(value))
-                mol.ClearProp(prop)
+            prop_names = mol.GetPropNames(includePrivate=True)
+            for prop_name in prop_names :
+                
+                add_prop = True
+                if 'Gold' in prop_name:
+                    if not prop_name == 'Gold.PLP.Fitness':
+                        add_prop = False
+                        
+                if add_prop:
+                    value = mol.GetProp(prop_name)
+                    for conf in mol.GetConformers() :
+                        conf.SetProp(prop_name, value)
                 
         for mol in mol_list :
             mol_props_to_conf(mol)
@@ -127,15 +204,18 @@ class ConfEnsemble() :
         if name is None :
             name = Chem.MolToSmiles(mol_list[0])
             
-        if output == 'conf_ensemble':
-            ce = cls(mol_list, name, standardize=standardize)
+        if output_type == 'conf_ensemble':
+            ce = cls(mol_list, 
+                     name, 
+                     standardize=standardize,
+                     renumber_atoms=renumber_atoms)
             return ce
         else:
             return mol_list
             
             
     def save_ensemble(self,
-                      sd_writer_path: str) :
+                      sd_writer_path: str) -> None :
         """
         Save the ensemble in an SDF file
         
@@ -149,7 +229,7 @@ class ConfEnsemble() :
         
         
     def save_confs_to_writer(self,
-                             writer: SDWriter) :
+                             writer: SDWriter) -> None:
         """
         Save each conf of the RDKit mol as a single molecule in a SDF
         
@@ -166,5 +246,5 @@ class ConfEnsemble() :
             for prop in prop_names :
                 value = conf.GetProp(prop)
                 mol.SetProp(prop, str(value))
-            writer.write(mol, conf_id)
+            writer.write(mol=mol, confId=conf_id)
             

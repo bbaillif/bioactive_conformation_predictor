@@ -1,23 +1,34 @@
-import pytorch_lightning as pl
 import torch
-import torch.nn.functional as F
 
 from torch_geometric.nn import radius_graph
-from torch_scatter import scatter
-from featurizer import PyGFeaturizer
-from torch_geometric.data import Batch
-from mol_drawer import MolDrawer
 from torch_geometric.nn.models import DimeNetPlusPlus
 from .atomistic_nn import AtomisticNN
 
 
 class AtomicDimeNet(AtomisticNN, DimeNetPlusPlus) :
-    """
-    Modification of the PyG DimeNetPlusPlus implementation to recover the atomic
+    """Modification of the PyG DimeNetPlusPlus implementation to recover the atomic
     contributions to the prediction
-    
-    #TODO: find definition for each parameter
-    """
+
+        :param readout: Readout function to perform on the list of individual
+        atomic values
+        :type readout: str, optional
+        :param hidden_channels: Size of hidden layers, defaults to 128
+        :type hidden_channels: int, optional
+        :param out_channels: Size of output layer, defaults to 1
+        :type out_channels: int, optional
+        :param num_blocks: Number of interaction blocks, defaults to 6
+        :type num_blocks: int, optional
+        :param int_emb_size: Interaction embedding size, defaults to 64
+        :type int_emb_size: int, optional
+        :param basis_emb_size: Size of basis function embedding, defaults to 8
+        :type basis_emb_size: int, optional
+        :param out_emb_channels: Size of output embedding, defaults to 256
+        :type out_emb_channels: int, optional
+        :param num_spherical: Number of spherical basis functions, defaults to 7
+        :type num_spherical: int, optional
+        :param num_radial: Number of radial basis functions, defaults to 6
+        :type num_radial: int, optional
+        """
     
     def __init__(self,
                  readout: str = 'add',
@@ -29,6 +40,7 @@ class AtomicDimeNet(AtomisticNN, DimeNetPlusPlus) :
                  out_emb_channels: int = 256, 
                  num_spherical: int = 7, 
                  num_radial: int = 6) :
+        
         AtomisticNN.__init__(self,
                              readout=readout)
         DimeNetPlusPlus.__init__(self,

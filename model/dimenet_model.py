@@ -1,6 +1,10 @@
 from typing import Dict, Any
 from .atomistic import AtomicDimeNet
 from .atomistic_nn_model import AtomisticNNModel
+from data.split import DataSplit
+from params import (LOG_DIRPATH, 
+                    DIMENET_CONFIG,
+                    DIMENET_MODEL_NAME)
 
 class DimeNetModel(AtomisticNNModel):
     """
@@ -36,4 +40,28 @@ class DimeNetModel(AtomisticNNModel):
         :return: Name of the model
         :rtype: str
         """
-        return 'DimeNetModel'
+        return DIMENET_MODEL_NAME
+    
+    
+    @classmethod
+    def get_model_for_data_split(cls,
+                                 data_split: DataSplit,
+                                 log_dir: str = LOG_DIRPATH
+                                 ) -> 'DimeNetModel':
+        """Get the trained model for a given data split
+
+        :param data_split: Data split
+        :type data_split: DataSplit
+        :param root: Data directory
+        :type root: str
+        :param log_dir: Directory where training log are stored
+        :type log_dir: str, optional
+        :return: Trained model
+        :rtype: SchNetModel
+        """
+        config = DIMENET_CONFIG
+        config['data_split'] = data_split
+        return cls._get_model_for_data_split(data_split=data_split,
+                                            model_name=DIMENET_MODEL_NAME,
+                                            config=config, 
+                                            log_dir=log_dir)

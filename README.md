@@ -1,2 +1,93 @@
 # bioactive_conformation_predictor
 Building a model to predict if a conformation is bioactive using EGNN
+
+# Installation
+Install the conda environment from the bioconfpred.yml file:
+`conda env create -f bioconfpred.yml`
+
+# Reproducing paper results
+To reproduce the results in the manuscript, the first step is to change the parameter values in params.py to match your desktop pathes. The ROOT_DIRPATH is your data directory (e.g. HDD), the PDBBIND_GENERAL_URL and PDBBIND_REFINED_URLare the download URL of PDBbind (login to their website and copy-paste the linksfrom the Download page). Double check if all the remaining pathes are new for youto avoid any overwrite.
+
+The next step is to train models:
+`python train_models.py`
+Each data source (i.e. PDBbind, ChEMBL, ENZYME) will be downloaded and pre-processed,and splits will be made. The scripts are built to train 5 models for each splitting strategy (random and scaffold).
+
+The next step is to run the model evaluations:
+`python evalute_models.py`
+
+The computed results can be visualized using the jupyter notebook compare_performances.ipynb
+
+The docking part is run with
+`python pdbbind_docking.py`
+and results analyzed with analyze_targets_pdbbind_docking.ipynb
+
+You can also download the data generated on my desktop here:
+LINK
+There are the PDB conf ensembles (bioactive conformations), GEN conf ensembles (generated conformers for each unique ligand), computed RMSD between bioactive and generated conformations, random and scaffold splits, and pretrained models
+
+# Architecture
+The package is built as follow.
+
+conf_ensemble directory contains classes to handle conformer ensembles
+ConfEnsemble is a wrapper around a RDKit Mol that handles the differentconformers as Conformer in the Mol, making sure that all atoms in each conformer are matched, and handling properties in each conformer
+ConfEnsembleLibrary is a wrapper around a dict that links an ensemble name to a ConfEnsemble. Each library has a directory where each ensemble can be stored, and also storing metadata in ensemble_names.csv and pdb_df.csv
+
+data contains classes to manage data
+- dataset contains the ConfEnsembleDataset base class, and the PyGDataset subclass (and the MoleculeEncoders to encode atom and bond data)
+- featurizer contains the base class MolFeaturizer, and the PyGFeaturizer subclass
+- preprocessing contains the ConfGenerator (wrapping the CSD conformer generator), MolStandardizer (standardize input ligand) and RMSDCalculator (to compute RMSD between bioactive and generated conformers)
+- split contains the DataSplit base class, the MoleculeSplit subclass and RandomSplit and ScaffoldSplit subclasses of MoleculeSplit
+- utils contains database connectors and other useful classes: ChEMBL, ENZYME, LigandExpo, PDBbind, MolConverter, SimilaritySearch
+- pose_reader.py to read output poses from GOLD
+
+docking contains classes to run docking with GOLD: GOLDDocker and PDBbindDocking
+
+evaluator contains classes to evaluate rankers/models: Evaluator base class, and ConfEnsembleModelEvaluator and RankerEvaluator subclasses
+
+model contains classes to build atomistic neural networks:
+- atomistic contains core models: ConfPredModel base class, AtomisticNN class, and AtomicSchNet, AtomicDimeNet and AtomicComENet subclasses. These are the core models.
+- other classes are AtomisticNNModel base class, SchNetModel, DimeNetModel and ComENetModel subclasses, that embeds all functions needed to predict the ARMSD from input conformation
+
+rankers contains classes to rank conformers based on predicted ARMSD or baselines: ConfRanker base class, and subclasses RandomRanker (randomly shuffling conformers), NoRankingRanker (keep original order, e.g. CSD conformer generator order), EnergyRanker (ascending MMFF94s energy), SASARanker (descending Solvent Accessible Surface Area), RGyrRanker (descending Radius of Gyration), TFD2SimRefMCSRanker (ascending TFD of the MCS to the most similar training molecule) and ModelRanker (ascending model ARMSD prediction)
+
+utils contains the MolConfViewer, based on nglviewer, useful to visualize molecules in a Jupyter notebook
+
+# Basic usage
+
+The main purpose of the package is to rank conformer ensemble to obtain a higher rate of bioactive-like conformers in early ranks. You can use a trained model to fuel a ranker that can give you the ranks of each conformer in a molecule:
+```
+from models import ComENetModel
+from rankers import ModelRanker
+checkpoint_path = /path/to/your/favorite/model_checkpoint.p
+model = ComENetModel.load_from_checkpoint(checkpoint_path) 
+alternatively, you can use the data_split to load the checkpoints of a trained model
+# from data.split import RandomSplit
+# data_split = RandomSplit() # default is the split number 0
+# model = ComENetModel.get_model_for_data_split(data_split)
+# you can also use SchNetModel and DimeNetModel but they lead to lower ranking performances
+ranker = ModelRanker(model) # other baseline rankers are available (e.g. energy, TFD)
+mol = yourFavoriteMoleculeWithConformers # ideally preprocesse using the ConfEnsemble
+ranks = ranker.rank_molecule(mol)
+```
+
+You can create a conformer ensemble from a list of molecule
+```
+from conf_ensemble import ConfEnsemble
+mol_list = listOfConformersForTheSameMolecularGraph # including same chirality
+ce = ConfEnsemble(mol_list) # ce = conf ensemble
+mol = ce.mol # mol is stored in the ce
+```
+
+You can create a conformer ensemble library from a list of molecule or a dictionnary {name: mol_list}:
+```
+from conf_ensemble_library import ConfEnsembleLibrary
+mol_list = listOfConformersForAnyMolecularGraph
+cel = ConfEnsembleLibrary.from_mol_list(mol_list) # cel = conf ensemble library
+# if names is not given as argument of cel, the SMILES will be used
+```
+
+For more methods of the ranker objects, please see the ConfRanker base class, the RankerEvaluator and the evaluate_rankers.py
+
+# Details
+
+MolStandardizer uses MolVS which removes hydrogens. Don't use on ligand structure if you want to keep hydrogens.

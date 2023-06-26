@@ -5,6 +5,10 @@ class AtomisticNN(ABC):
     """
     Base class for atomistic neural network: taking as input a conformation
     and returning values for each atom of the molecule
+    
+    :param readout: Readout function to perform on the list of individual
+        atomic values
+    :type readout: str
     """
     
     def __init__(self,

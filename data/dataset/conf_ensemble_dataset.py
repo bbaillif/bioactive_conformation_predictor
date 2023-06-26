@@ -3,17 +3,17 @@ import numpy as np
 import pandas as pd
 
 from abc import ABC, abstractmethod
-from rdkit.Chem.rdchem import Mol
+from rdkit.Chem import Mol
 from typing import List, Sequence, Dict, Tuple
 from torch.utils.data import Subset
-from ..split import DataSplit
+from data.split import DataSplit
 from tqdm import tqdm
-from conf_ensemble import ConfEnsemble, ConfEnsembleLibrary
+from conf_ensemble import ConfEnsembleLibrary
 
 class ConfEnsembleDataset(ABC):
     """
-    Base class to handle dataset of conformations. Uses ConfEnsembleLibraries
-    to handle different conformations for the same molecules.
+    Base class to handle dataset of conformations. Uses ConfEnsembleLibrary
+    to handle different conformers for the same molecules.
     Use case is having dataset of bioactive+generated conformations,
     where each type of conformation is in a different library
     
@@ -23,7 +23,6 @@ class ConfEnsembleDataset(ABC):
     :type gen_cel_name: str
     :param root: Data directory:
     :type root: str
-    :rmsd_df_filename
     
     """
     
@@ -39,7 +38,6 @@ class ConfEnsembleDataset(ABC):
         self.gen_cel_dir = os.path.join(self.root, self.gen_cel_name)
         
         self.cel_df_path = os.path.join(self.cel_dir, 'ensemble_names.csv')
-        self.cel_df = pd.read_csv(self.cel_df_path)
     
     
     def compute_mol_ids(self,
@@ -61,10 +59,10 @@ class ConfEnsembleDataset(ABC):
         for conf in confs :
             if conf.HasProp('PDB_ID'):
                 pdb_id = conf.GetProp('PDB_ID')
-                mol_id = f'{name}_{pdb_id}'
+                mol_id = f'{name}__{pdb_id}'
                 mol_ids.append(mol_id)
             else:
-                mol_id = f'{name}_Gen_{gen_i}'
+                mol_id = f'{name}__Gen__{gen_i}'
                 mol_ids.append(mol_id)
                 gen_i = gen_i + 1
                 
@@ -85,6 +83,7 @@ class ConfEnsembleDataset(ABC):
         :type pdb_id_list: List
         
         """
+        self.cel_df = pd.read_csv(self.cel_df_path)
         mol_id_df = self.mol_id_df
         mol_id_df['ensemble_name'] = mol_id_df['mol_id'].apply(lambda s : s.split('_')[0])
         mol_id_df['pdb_id'] = mol_id_df['mol_id'].apply(lambda s : s.split('_')[1])
@@ -97,6 +96,7 @@ class ConfEnsembleDataset(ABC):
             smiles_ok = mol_id_df['smiles'].isin(smiles_list)
             pdb_ok = mol_id_df['pdb_id'].isin(list(pdb_id_list) + ['Gen']) # Adding Gen to include generated conformations
             mol_id_subset_df = mol_id_df[smiles_ok & pdb_ok]
+            
         return mol_id_subset_df
     
     
@@ -117,9 +117,8 @@ class ConfEnsembleDataset(ABC):
         :type rmsd_name: str
         
         """
-        
-        self.rmsd_name = rmsd_name
-        self.rmsd_dir = os.path.join(self.root, self.rmsd_name)
+        self.cel_df = pd.read_csv(self.cel_df_path)
+        rmsd_dir = os.path.join(self.root, rmsd_name)
         
         mol_id_subset_df = self.get_mol_id_subset_df(smiles_list, pdb_id_list)
         all_bioactive_rmsds = {}
@@ -151,7 +150,7 @@ class ConfEnsembleDataset(ABC):
                     
                     file_prefix = filename.split('.')[0]
                     new_filename = f'{file_prefix}.npy'
-                    filepath = os.path.join(self.rmsd_dir, new_filename)
+                    filepath = os.path.join(rmsd_dir, new_filename)
                     rmsd_matrix = np.load(filepath)
                     
                     included_bio_idxs = [i
@@ -175,19 +174,6 @@ class ConfEnsembleDataset(ABC):
                     print(e)
             
         return all_bioactive_rmsds
-    
-    
-    # def get_bioactive_rmsds(self,
-    #                         data_split: DataSplit) -> np.ndarray:
-    #     rmsd_df = pd.read_csv(self.rmsd_df_path)
-    #     split_type = data_split.split_type
-    #     if split_type == 'protein':
-    #         split_i = data_split.split_i
-    #         col_name = f'{split_type}_{split_i}'
-    #     else :
-    #         col_name = 'all'
-    #     rmsds = rmsd_df[col_name].values
-    #     return rmsds
     
     
     @abstractmethod
@@ -224,8 +210,6 @@ class ConfEnsembleDataset(ABC):
         split_names = ['train', 'val', 'test']
         subsets = {}
         
-        # self.add_bioactive_rmsds(data_split) # Add the ARMSD adapted to the split
-        
         # There is a 1:1 relationship between PDB id and smiles
         # While there is a 1:N relationship between smiles and PDB id
         # The second situation is able to select only certain bioactive conformation
@@ -258,7 +242,12 @@ class ConfEnsembleDataset(ABC):
         # import pdb;pdb.set_trace()
         smiles_list = data_split.get_smiles(subset_name=subset_name)
         pdb_id_list = data_split.get_pdb_ids(subset_name=subset_name)
-        mol_id_subset_df = self.get_mol_id_subset_df(smiles_list, pdb_id_list)
+        mol_id_df = self.mol_id_df
+        assert self.cel_df_path == data_split.cel_df_path, \
+            'The data_split and dataset must have the same CEL directory'
+        mol_id_subset_df = data_split.get_mol_id_subset_df(mol_id_df,
+                                                           smiles_list, 
+                                                           pdb_id_list)
         indices = mol_id_subset_df.index
         subset = Subset(dataset=self, indices=indices)
         return subset
