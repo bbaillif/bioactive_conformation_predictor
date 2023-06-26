@@ -66,11 +66,18 @@ from models import ComENetModel
 from rankers import ModelRanker
 checkpoint_path = /path/to/your/favorite/model_checkpoint.p
 model = ComENetModel.load_from_checkpoint(checkpoint_path) 
-alternatively, you can use the data_split to load the checkpoints of a trained model
-# from data.split import RandomSplit
+```
+
+Alternatively, you can use the data_split to load the checkpoints of a trained model
+```python
+from data.split import RandomSplit
 # data_split = RandomSplit() # default is the split number 0
 # model = ComENetModel.get_model_for_data_split(data_split)
-# you can also use SchNetModel and DimeNetModel but they lead to lower ranking performances
+```
+
+You can also use SchNetModel and DimeNetModel but they lead to lower ranking performances
+
+```python
 ranker = ModelRanker(model) # other baseline rankers are available (e.g. energy, TFD)
 mol = yourFavoriteMoleculeWithConformers # ideally preprocesse using the ConfEnsemble
 ranks = ranker.rank_molecule(mol)
