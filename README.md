@@ -1,14 +1,13 @@
-# bioactive_conformation_predictor
-Building a model to predict if a conformation is bioactive using EGNN
+# Applying atomistic neural networks to bias conformer ensembles towards bioactive-like conformations
 
-# Installation
+## Installation
 Install the conda environment from the bioconfpred.yml file:
 `conda env create -f bioconfpred.yml`
 
 The conformer generation step, RMSD calculation and GOLD docking requires the tools from CCDC through the [CSD Python API](https://downloads.ccdc.cam.ac.uk/documentation/API/) that can be [installed using conda](https://downloads.ccdc.cam.ac.uk/documentation/API/installation_notes.html#id2) (license required).
 You can replace these parts in the code by open source solutions like RDKit ([EmbedMultipleConfs](https://www.rdkit.org/docs/source/rdkit.Chem.rdDistGeom.html#rdkit.Chem.rdDistGeom.EmbedMultipleConfs) and [GetBestRMSD](https://www.rdkit.org/docs/source/rdkit.Chem.rdMolAlign.html#rdkit.Chem.rdMolAlign.GetBestRMS)) and [Vina](https://github.com/ccsb-scripps/AutoDock-Vina) (however I am not aware how to keep torsions rigid for the re-docking).
 
-# Reproducing paper results
+## Reproducing paper results
 To reproduce the results in the manuscript, the first step is to change the parameter values in params.py to match your desktop pathes. The ROOT_DIRPATH is your data directory (e.g. HDD), the PDBBIND_GENERAL_URL and PDBBIND_REFINED_URL are the download URL of PDBbind (login to their website and copy-paste the linksfrom the Download page). Double check if all the remaining pathes are new for youto avoid any overwrite.
 
 Activate the conda environment:
@@ -31,7 +30,7 @@ You can also download the data generated on my desktop here:
 LINK
 There are the PDB conf ensembles (bioactive conformations), GEN conf ensembles (generated conformers for each unique ligand), computed RMSD between bioactive and generated conformations, random and scaffold splits, and pretrained models
 
-# Architecture
+## Architecture
 The package is built as follow.
 
 conf_ensemble directory contains classes to handle conformer ensembles
@@ -58,7 +57,7 @@ rankers contains classes to rank conformers based on predicted ARMSD or baseline
 
 utils contains the MolConfViewer, based on nglviewer, useful to visualize molecules in a Jupyter notebook
 
-# Basic usage
+## Basic usage
 
 The main purpose of the package is to rank conformer ensemble to obtain a higher rate of bioactive-like conformers in early ranks. You can use a trained model to fuel a ranker that can give you the ranks of each conformer in a molecule:
 ```python
@@ -101,6 +100,6 @@ cel = ConfEnsembleLibrary.from_mol_list(mol_list) # cel = conf ensemble library
 
 For more methods of the ranker objects, please see the ConfRanker base class, the RankerEvaluator and the evaluate_rankers.py
 
-# Details
+## Details
 
 MolStandardizer uses MolVS which removes hydrogens. Don't use on ligand structure if you want to keep hydrogens.
