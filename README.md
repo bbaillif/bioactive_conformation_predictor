@@ -34,13 +34,14 @@ There are the PDB conf ensembles (bioactive conformations), GEN conf ensembles (
 The package is built as follow.
 
 conf_ensemble directory contains classes to handle conformer ensembles
-ConfEnsemble is a wrapper around a RDKit Mol that handles the differentconformers as Conformer in the Mol, making sure that all atoms in each conformer are matched, and handling properties in each conformer
-ConfEnsembleLibrary is a wrapper around a dict that links an ensemble name to a ConfEnsemble. Each library has a directory where each ensemble can be stored, and also storing metadata in ensemble_names.csv and pdb_df.csv
+- ConfEnsemble is a wrapper around a RDKit Mol that handles the differentconformers as Conformer in the Mol, making sure that all atoms in each conformer are matched, and handling properties in each conformer
+- ConfEnsembleLibrary is a wrapper around a dict that links an ensemble name to a ConfEnsemble. Each library has a directory where each ensemble can be stored, and also storing metadata in ensemble_names.csv and pdb_df.csv
+- RMSDCalculator (to compute RMSD between bioactive and generated conformers)
 
 data contains classes to manage data
 - dataset contains the ConfEnsembleDataset base class, and the PyGDataset subclass (and the MoleculeEncoders to encode atom and bond data)
 - featurizer contains the base class MolFeaturizer, and the PyGFeaturizer subclass
-- preprocessing contains the ConfGenerator (wrapping the CSD conformer generator), MolStandardizer (standardize input ligand) and RMSDCalculator (to compute RMSD between bioactive and generated conformers)
+- preprocessing contains the ConfGenerator (wrapping the CSD conformer generator) and MolStandardizer (standardize input ligand)
 - split contains the DataSplit base class, the MoleculeSplit subclass and RandomSplit and ScaffoldSplit subclasses of MoleculeSplit
 - utils contains database connectors and other useful classes: ChEMBL, ENZYME, LigandExpo, PDBbind, MolConverter, SimilaritySearch
 - pose_reader.py to read output poses from GOLD
