@@ -5,8 +5,14 @@ Building a model to predict if a conformation is bioactive using EGNN
 Install the conda environment from the bioconfpred.yml file:
 `conda env create -f bioconfpred.yml`
 
+The conformer generation step, RMSD calculation and GOLD docking requires the tools from CCDC through the [CSD Python API](https://downloads.ccdc.cam.ac.uk/documentation/API/) that can be [installed using conda](https://downloads.ccdc.cam.ac.uk/documentation/API/installation_notes.html#id2) (license required).
+You can replace these parts in the code by open source solutions like RDKit ([EmbedMultipleConfs](https://www.rdkit.org/docs/source/rdkit.Chem.rdDistGeom.html#rdkit.Chem.rdDistGeom.EmbedMultipleConfs) and [GetBestRMSD](https://www.rdkit.org/docs/source/rdkit.Chem.rdMolAlign.html#rdkit.Chem.rdMolAlign.GetBestRMS)) and [Vina](https://github.com/ccsb-scripps/AutoDock-Vina) (however I am not aware how to keep torsions rigid for the re-docking).
+
 # Reproducing paper results
-To reproduce the results in the manuscript, the first step is to change the parameter values in params.py to match your desktop pathes. The ROOT_DIRPATH is your data directory (e.g. HDD), the PDBBIND_GENERAL_URL and PDBBIND_REFINED_URLare the download URL of PDBbind (login to their website and copy-paste the linksfrom the Download page). Double check if all the remaining pathes are new for youto avoid any overwrite.
+To reproduce the results in the manuscript, the first step is to change the parameter values in params.py to match your desktop pathes. The ROOT_DIRPATH is your data directory (e.g. HDD), the PDBBIND_GENERAL_URL and PDBBIND_REFINED_URL are the download URL of PDBbind (login to their website and copy-paste the linksfrom the Download page). Double check if all the remaining pathes are new for youto avoid any overwrite.
+
+Activate the conda environment:
+`conda activate bioconfpred`
 
 The next step is to train models:
 `python train_models.py`
