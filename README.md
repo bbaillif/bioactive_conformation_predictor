@@ -110,7 +110,6 @@ You can create a conformer ensemble library from a list of molecule or a diction
 from conf_ensemble_library import ConfEnsembleLibrary
 mol_list = listOfConformersForAnyMolecularGraph
 cel = ConfEnsembleLibrary.from_mol_list(mol_list) # cel = conf ensemble library
-# if names is not given as argument of cel, the SMILES will be used
 ```
 
 For more methods of the ranker objects, please see the ConfRanker base class, the RankerEvaluator and the evaluate_rankers.py
