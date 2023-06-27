@@ -26,9 +26,17 @@ The docking part is run with
 `python pdbbind_docking.py`
 and results analyzed with analyze_targets_pdbbind_docking.ipynb
 
-You can also download the data generated on my desktop here:
-LINK
-There are the PDB conf ensembles (bioactive conformations), GEN conf ensembles (generated conformers for each unique ligand), computed RMSD between bioactive and generated conformations, random and scaffold splits, and pretrained models
+You can also download the data generated on my desktop [here](https://figshare.com/articles/dataset/Data_for_Applying_atomistic_neural_networks_to_bias_conformer_ensemble_towards_bioactive-like_conformations/23580267).
+In the data folder, you can find:
+- pdb_conf_ensembles: Ensembles of bioactive conformation for each unique ligand.
+- gen_conf_ensembles: Ensembles of generated conformers for each unique ligand.
+- rmsds: ARMSD between each bioactive conformation and generated conformer.
+- processed: Pytorch Geometric processed data
+- splits: Random and Scaffold splits (each unique ligand represented by SMILES)
+- lightning_logs: Logs of model training (using Pytorch Lightning)
+- pyg_mol_ids.csv: Allow to retrieve the original ligand-conformation for each data in the Pytorch Geometric dataset
+
+One pretrained model for each atomistic neural network and data split are available [here](https://figshare.com/articles/dataset/Pretrained_atomistic_neural_networks/23586240)
 
 ## Architecture
 The package is built as follow.
