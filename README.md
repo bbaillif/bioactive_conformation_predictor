@@ -15,6 +15,7 @@ Activate the conda environment:
 
 The next step is to train models:
 `python train_models.py`
+
 Each data source (i.e. PDBbind, ChEMBL, ENZYME) will be downloaded and pre-processed,and splits will be made. The scripts are built to train 5 models for each splitting strategy (random and scaffold).
 
 The next step is to run the model evaluations:
@@ -24,7 +25,8 @@ The computed results can be visualized using the jupyter notebook compare_perfor
 
 The docking part is run with
 `python pdbbind_docking.py`
-and results analyzed with analyze_targets_pdbbind_docking.ipynb
+
+Docking results can be analyzed with analyze_targets_pdbbind_docking.ipynb
 
 You can also download the data generated on my desktop [here](https://figshare.com/articles/dataset/Data_for_Applying_atomistic_neural_networks_to_bias_conformer_ensemble_towards_bioactive-like_conformations/23580267).
 In the data folder, you can find:
@@ -68,7 +70,9 @@ utils contains the MolConfViewer, based on nglviewer, useful to visualize molecu
 
 ## Basic usage
 
-The main purpose of the package is to rank conformer ensemble to obtain a higher rate of bioactive-like conformers in early ranks. You can use a trained model to fuel a ranker that can give you the ranks of each conformer in a molecule:
+The main purpose of the package is to rank conformer ensemble to obtain a higher rate of bioactive-like conformers in early ranks. 
+
+You can use a trained model to fuel a ranker that can give you the ranks of each conformer in a molecule:
 ```python
 from models import ComENetModel
 from rankers import ModelRanker
@@ -79,19 +83,21 @@ model = ComENetModel.load_from_checkpoint(checkpoint_path)
 Alternatively, you can use the data_split to load the checkpoints of a trained model
 ```python
 from data.split import RandomSplit
-# data_split = RandomSplit() # default is the split number 0
-# model = ComENetModel.get_model_for_data_split(data_split)
+data_split = RandomSplit() # default is the split number 0
+model = ComENetModel.get_model_for_data_split(data_split)
 ```
 
-You can also use SchNetModel and DimeNetModel but they lead to lower ranking performances
+Note: You can also use  
 
 ```python
-ranker = ModelRanker(model) # other baseline rankers are available (e.g. energy, TFD)
-mol = yourFavoriteMoleculeWithConformers # ideally preprocesse using the ConfEnsemble
+ranker = ModelRanker(model)
+mol = yourFavoriteMoleculeWithConformers
 ranks = ranker.rank_molecule(mol)
 ```
 
-You can create a conformer ensemble from a list of molecule
+Other atomistic neural networks are available (SchNetModel and DimeNetModel) but they lead to lower ranking performances, and other rankers can be used as baselines (e.g. EnergyRanker, TFD2SimRefMCSRanker)
+
+In case you have different conformers of the same molecule in different RDKit molecules, you can create a conformer ensemble from a list of RDKit Mol
 ```python
 from conf_ensemble import ConfEnsemble
 mol_list = listOfConformersForTheSameMolecularGraph # including same chirality
@@ -99,7 +105,7 @@ ce = ConfEnsemble(mol_list) # ce = conf ensemble
 mol = ce.mol # mol is stored in the ce
 ```
 
-You can create a conformer ensemble library from a list of molecule or a dictionnary {name: mol_list}:
+You can create a conformer ensemble library from a list of molecule or a dictionnary {name: mol_list} (default name is SMILES):
 ```python
 from conf_ensemble_library import ConfEnsembleLibrary
 mol_list = listOfConformersForAnyMolecularGraph
