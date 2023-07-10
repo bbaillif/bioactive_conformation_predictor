@@ -10,6 +10,9 @@ You can replace these parts in the code by open source solutions like RDKit ([Em
 ## Reproducing paper results
 To reproduce the results in the manuscript, the first step is to change the parameter values in params.py to match your desktop pathes. The ROOT_DIRPATH is your data directory (e.g. HDD), the PDBBIND_GENERAL_URL and PDBBIND_REFINED_URL are the download URL of PDBbind (login to their website and copy-paste the linksfrom the Download page). Double check if all the remaining pathes are new for youto avoid any overwrite.
 
+Install the conda environment:
+`conda env create -f bioconfpred.yml`
+
 Activate the conda environment:
 `conda activate bioconfpred`
 
