@@ -74,6 +74,8 @@ utils contains the MolConfViewer, based on nglviewer, useful to visualize molecu
 
 ## Basic usage
 
+You can install the bioconfpred package with pip : pip install . -e
+
 The main purpose of the package is to rank conformer ensemble to obtain a higher rate of bioactive-like conformers in early ranks. 
 
 The first step is to load a model:
