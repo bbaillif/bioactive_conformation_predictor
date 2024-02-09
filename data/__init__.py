@@ -1,1 +1,0 @@
-from .pose_reader import PoseReader

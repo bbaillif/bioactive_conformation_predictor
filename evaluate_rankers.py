@@ -5,25 +5,26 @@ import copy
 
 from tqdm import tqdm
 from typing import Tuple, Dict, Sequence
-from conf_ensemble import ConfEnsembleLibrary, ConfEnsemble
-from evaluator.ranker_evaluator import RankerEvaluator
-from model import (AtomisticNNModel,
+from bioconfpred.conf_ensemble import (ConfEnsembleLibrary, 
+                                       ConfEnsemble)
+from bioconfpred.evaluator import RankerEvaluator
+from bioconfpred.model import (AtomisticNNModel,
                     SchNetModel, 
                    DimeNetModel, 
                    ComENetModel)
-from data.split import RandomSplit, ScaffoldSplit
-from rankers import (ConfRanker,
-                     NoRankingRanker,
-                     RandomRanker,
-                     EnergyRanker,
-                     SASARanker,
-                     RGyrRanker,
-                     ModelRanker,
-                     TFD2SimRefMCSRanker)
+from bioconfpred.data.split import RandomSplit, ScaffoldSplit
+from bioconfpred.ranker import (ConfRanker,
+                                NoRankingRanker,
+                                RandomRanker,
+                                EnergyRanker,
+                                SASARanker,
+                                RGyrRanker,
+                                ModelRanker,
+                                TFD2SimRefMCSRanker)
 from typing import List
-from params import (BIO_CONF_DIRPATH, 
-                    GEN_CONF_DIRPATH,
-                    RMSD_DIRPATH)
+from bioconfpred.params import (BIO_CONF_DIRPATH, 
+                                GEN_CONF_DIRPATH,
+                                RMSD_DIRPATH)
 
 # PDB ID based
 def get_ce_and_targets(filename: str, 

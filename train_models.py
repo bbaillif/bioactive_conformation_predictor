@@ -2,13 +2,16 @@ import os
 import pytorch_lightning as pl
 
 from rdkit import Chem # safe import before ccdc imports
-from data.dataset.pyg_dataset import PyGDataset
-from data.split import RandomSplit, ScaffoldSplit
-from model import SchNetModel, DimeNetModel, ComENetModel
+from bioconfpred.data.dataset import PyGDataset
+from bioconfpred.data.split import (RandomSplit, 
+                                    ScaffoldSplit)
+from bioconfpred.model import (SchNetModel, 
+                               DimeNetModel, 
+                               ComENetModel)
 from pytorch_lightning.callbacks.model_checkpoint import ModelCheckpoint
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.loggers import TensorBoardLogger
-from params import (LOG_DIRPATH, 
+from bioconfpred.params import (LOG_DIRPATH, 
                     SCHNET_CONFIG, 
                     DIMENET_CONFIG, 
                     COMENET_CONFIG)

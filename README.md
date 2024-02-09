@@ -49,7 +49,6 @@ The package is built as follow.
 conf_ensemble directory contains classes to handle conformer ensembles
 - ConfEnsemble is a wrapper around a RDKit Mol that handles the differentconformers as Conformer in the Mol, making sure that all atoms in each conformer are matched, and handling properties in each conformer
 - ConfEnsembleLibrary is a wrapper around a dict that links an ensemble name to a ConfEnsemble. Each library has a directory where each ensemble can be stored, and also storing metadata in ensemble_names.csv and pdb_df.csv
-- RMSDCalculator (to compute RMSD between bioactive and generated conformers)
 
 data contains classes to manage data
 - dataset contains the ConfEnsembleDataset base class, and the PyGDataset subclass (and the MoleculeEncoders to encode atom and bond data)
@@ -71,38 +70,51 @@ rankers contains classes to rank conformers based on predicted ARMSD or baseline
 
 utils contains the MolConfViewer, based on nglviewer, useful to visualize molecules in a Jupyter notebook
 
+- RMSDCalculator (to compute RMSD between bioactive and generated conformers)
+
 ## Basic usage
 
 The main purpose of the package is to rank conformer ensemble to obtain a higher rate of bioactive-like conformers in early ranks. 
 
-You can use a trained model to fuel a ranker that can give you the ranks of each conformer in a molecule:
+The first step is to load a model:
 ```python
-from models import ComENetModel
-from rankers import ModelRanker
-checkpoint_path = /path/to/your/favorite/model_checkpoint.p
-model = ComENetModel.load_from_checkpoint(checkpoint_path) 
+from bioconfpred.model import ComENetModel
+from bioconfpred.rankers import ModelRanker
+from bioconfpred.params import COMENET_CONFIG
+# A model requires a config. For ComENet, we load COMENET_CONFIG
+config = COMENET_CONFIG
+# Models were trained using data splits. In evaluation mode, we can set the data_split to None
+config['data_split'] = None
+checkpoint_path = "/path/to/your/favorite/model_checkpoint.p"
+model = ComENetModel.load_from_checkpoint(checkpoint_path, 
+                                          config=config)
+ranker = ModelRanker(model)
+mol = yourFavoriteMoleculeWithConformers
+ranks = ranker.rank_molecule(mol)
+```
+
+Example for mol:
+```python
+from rdkit import Chem
+from rdkit.Chem.rdDistGeom import EmbedMultipleConfs
+mol = Chem.MolFromSmiles('CC(=O)NC1=CC=C(C=C1)O')
+mol = Chem.AddHs(mol, addCoords=True)
+EmbedMultipleConfs(mol, 250)
 ```
 
 Alternatively, you can use the data_split to load the checkpoints of a trained model
 ```python
-from data.split import RandomSplit
+from bioconfpred.model import ComENetModel
+from bioconfpred.data.split import RandomSplit
 data_split = RandomSplit() # default is the split number 0
-model = ComENetModel.get_model_for_data_split(data_split)
-```
-
-Note: You can also use  
-
-```python
-ranker = ModelRanker(model)
-mol = yourFavoriteMoleculeWithConformers
-ranks = ranker.rank_molecule(mol)
+model = ComENetModel.get_model_for_data_split(data_split) # Automatically loads the config and get the model from
 ```
 
 Other atomistic neural networks are available (SchNetModel and DimeNetModel) but they lead to lower ranking performances, and other rankers can be used as baselines (e.g. EnergyRanker, TFD2SimRefMCSRanker)
 
 In case you have different conformers of the same molecule in different RDKit molecules, you can create a conformer ensemble from a list of RDKit Mol
 ```python
-from conf_ensemble import ConfEnsemble
+from bioconfpred.conf_ensemble import ConfEnsemble
 mol_list = listOfConformersForTheSameMolecularGraph # including same chirality
 ce = ConfEnsemble(mol_list) # ce = conf ensemble
 mol = ce.mol # mol is stored in the ce
@@ -110,7 +122,7 @@ mol = ce.mol # mol is stored in the ce
 
 You can create a conformer ensemble library from a list of molecule or a dictionnary {name: mol_list} (default name is SMILES):
 ```python
-from conf_ensemble_library import ConfEnsembleLibrary
+from bioconfpred.conf_ensemble import ConfEnsembleLibrary
 mol_list = listOfConformersForAnyMolecularGraph
 cel = ConfEnsembleLibrary.from_mol_list(mol_list) # cel = conf ensemble library
 ```
@@ -120,3 +132,5 @@ For more methods of the ranker objects, please see the ConfRanker base class, th
 ## Details
 
 MolStandardizer uses MolVS which removes hydrogens. Don't use on ligand structure if you want to keep hydrogens.
+If you want to create your own dataset for training, you need to modify the PyGDataset in bioconfpred/data/dataset,
+using your own list of ligands in the preprocess function instead of the default PDBbind
