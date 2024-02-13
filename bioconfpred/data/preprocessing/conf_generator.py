@@ -3,14 +3,18 @@ import pandas as pd
 
 from rdkit import Chem # safe import before ccdc imports
 from multiprocessing import Pool, TimeoutError
-from ccdc.conformer import ConformerGenerator, ConformerHitList
-from ccdc.molecule import Molecule
-from ccdc.io import MoleculeWriter, MoleculeReader
 from typing import Tuple
 from bioconfpred.data.utils import MolConverter
 from bioconfpred.params import (BIO_CONF_DIRNAME,
                     GEN_CONF_DIRNAME, 
                     DATA_DIRPATH)
+
+try:
+    from ccdc.conformer import ConformerGenerator, ConformerHitList
+    from ccdc.molecule import Molecule
+    from ccdc.io import MoleculeWriter, MoleculeReader
+except:
+    print('CSD Python API not installed')
 
 class ConfGenerator() :
     """Class to generate conformers for bioactive conformation (in PDBbind)

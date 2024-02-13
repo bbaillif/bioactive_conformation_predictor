@@ -7,13 +7,17 @@ from rdkit.Chem.rdMolAlign import GetBestRMS
 from typing import List, Tuple
 from rdkit.Chem import Mol
 from multiprocessing import Pool
-from ccdc.descriptors import MolecularDescriptors
 from bioconfpred.conf_ensemble import ConfEnsembleLibrary
 from bioconfpred.data.utils import MolConverter
 from bioconfpred.params import (DATA_DIRPATH,
                     BIO_CONF_DIRNAME,
                     GEN_CONF_DIRNAME,
                     RMSD_DIRNAME)
+
+try:
+    from ccdc.descriptors import MolecularDescriptors
+except:
+    print('CSD Python API not installed')
 
 class RMSDCalculator() :
     """Class to generate RMSD between bioactive conformations and generated

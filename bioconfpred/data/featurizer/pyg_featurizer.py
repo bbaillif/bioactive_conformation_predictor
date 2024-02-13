@@ -12,9 +12,13 @@ from rdkit.Chem.rdForceFieldHelpers import MMFFSanitizeMolecule
 from rdkit.Chem.rdMolDescriptors import CalcNumRotatableBonds
 from bioconfpred.data.utils import MolConverter
 from torch_geometric.data import Data
-from ccdc.descriptors import MolecularDescriptors
 from .molecule_encoders import MoleculeEncoders
 from bioconfpred.conf_ensemble import ConfEnsembleLibrary
+
+try:
+    from ccdc.descriptors import MolecularDescriptors
+except:
+    print('CSD Python API not installed')
 
     
 class PyGFeaturizer(MolFeaturizer) :

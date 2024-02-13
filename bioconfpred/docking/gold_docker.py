@@ -2,11 +2,15 @@ import os
 import time
 
 from rdkit import Chem # safe before ccdc imports
-from ccdc.docking import Docker
-from ccdc.io import MoleculeReader
-from ccdc.io import Entry, Molecule, MoleculeWriter
-from ccdc.protein import Protein
 from typing import Tuple, Union
+
+try:
+    from ccdc.docking import Docker
+    from ccdc.io import MoleculeReader
+    from ccdc.io import Entry, Molecule, MoleculeWriter
+    from ccdc.protein import Protein
+except:
+    print('CSD Python API not installed')
 
 class FailedGOLDDockingException(Exception) :
     """Raised if GOLD does not return 0

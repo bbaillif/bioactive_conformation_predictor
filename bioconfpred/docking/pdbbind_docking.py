@@ -26,7 +26,7 @@ from .gold_docker import GOLDDocker
 from bioconfpred.data.utils import MolConverter
 from bioconfpred.data.sources import PDBbind
 from bioconfpred.conf_ensemble import ConfEnsemble
-from bioconfpred.rankers import ConfRanker
+from bioconfpred.ranker import ConfRanker
 from bioconfpred.data.split import DataSplit
 from bioconfpred.params import (GOLD_PDBBIND_DIRPATH,
                     DATA_DIRPATH, 

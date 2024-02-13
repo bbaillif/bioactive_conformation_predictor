@@ -4,7 +4,6 @@ import pickle
 
 
 from tqdm import tqdm
-from torch.utils.data import Subset
 from typing import Sequence, List, Dict, Any, Tuple
 from rdkit import Chem
 from rdkit.Chem.rdchem import Mol
@@ -12,10 +11,9 @@ from rdkit.ML.Scoring.Scoring import CalcEnrichment, CalcBEDROC
 from scipy.stats import spearmanr
 from .evaluator import Evaluator
 from .conf_ensemble_model_evaluator import ConfEnsembleModelEvaluator
-from bioconfpred.rankers import ModelRanker
 from bioconfpred.model import SchNetModel
 from bioconfpred.data.split import MoleculeSplit
-from bioconfpred.rankers import (ConfRanker, 
+from bioconfpred.ranker import (ConfRanker, 
                                  ModelRanker, 
                                  TFD2SimRefMCSRanker)
 from bioconfpred.conf_ensemble import ConfEnsembleLibrary

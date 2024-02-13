@@ -9,22 +9,25 @@ from tqdm import tqdm
 from rdkit import Chem
 from rdkit.Chem import Mol
 from rdkit.ML.Scoring.Scoring import CalcEnrichment, CalcBEDROC
-from ccdc.io import MoleculeReader, Molecule
-from ccdc.conformer import ConformerGenerator
 from multiprocessing import Pool
 from .gold_docker import GOLDDocker
 from bioconfpred.conf_ensemble import ConfEnsemble
 from bioconfpred.model import SchNetModel
-from bioconfpred.rankers import (ModelRanker, 
+from bioconfpred.ranker import (ModelRanker, 
                                 RandomRanker,
                                 NoRankingRanker,
                                 EnergyRanker,
                                 PropertyRanker,
                                 ConfRanker)
-
 from bioconfpred.data.split import RandomSplit
 from bioconfpred.data.utils import MolConverter
 from typing import List, Tuple, Dict
+
+try:
+    from ccdc.io import MoleculeReader, Molecule
+    from ccdc.conformer import ConformerGenerator
+except:
+    print('CSD Python API not installed')
 
 class DUDEDocking() :
     """ Performs docking for actives and decoys for a target in DUD-E

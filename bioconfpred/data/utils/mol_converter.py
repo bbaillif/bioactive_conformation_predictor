@@ -3,8 +3,12 @@ import copy
 from rdkit import Chem
 from rdkit.Chem import Mol
 from rdkit.Geometry.rdGeometry import Point3D
-from ccdc.molecule import Molecule
 from typing import List, Tuple
+
+try:
+    from ccdc.molecule import Molecule
+except:
+    print('CSD Python API not installed')
 
 class ConversionError(Exception) :
     pass

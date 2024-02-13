@@ -29,7 +29,6 @@ dependencies:
   - cffi=1.15.1=py37h74dc2b5_0
   - charset-normalizer=2.0.4=pyhd3eb1b0_0
   - cryptography=38.0.1=py37h9ce1e76_0
-  - csd-python-api=3.0.8=py37_0
   - cudatoolkit=11.3.1=h2bc3f7f_2
   - curl=7.85.0=h5eee18b_0
   - cycler=0.11.0=pyhd3eb1b0_0
@@ -320,11 +319,11 @@ dependencies:
     - tensorboardx==2.5.1
     - tifffile==2021.11.2
     - torch-cluster==1.6.0
-    - torch-geometric==2.0.5
+    - torch-geometric==2.1.0
     - torch-scatter==2.0.9
     - torch-sparse==0.6.13
     - torchmetrics==0.9.1
-    - tqdm==4.31.1
+    - tqdm
     - typed-argument-parser==1.7.2
     - typing-inspect==0.8.0
     - virtualenv==20.16.3
